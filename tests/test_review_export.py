@@ -1,6 +1,7 @@
 import wz_pipeline.review as review_module
 
 from wz_pipeline.review import (
+    build_failure_review_metadata,
     build_grammar_review_metadata,
     exclude_rows_with_terms,
     filter_review_rows,
@@ -123,3 +124,35 @@ def test_build_grammar_review_metadata_respects_empty_review_markers(monkeypatch
     )
     assert metadata["grammar_markers"] == ""
     assert metadata["grammar_auto_flags"] == ""
+
+
+def test_build_failure_review_metadata_uses_rule_failure_buckets() -> None:
+    metadata = build_failure_review_metadata(
+        {
+            "rule_gate_status": "fail",
+            "validation": {
+                "reasons": [
+                    "grammar:aspect_misuse",
+                    "domain_required_terms_missing",
+                    "low_wz_word_coverage:1",
+                ]
+            },
+        }
+    )
+    assert metadata["failure_buckets"] == "grammar|domain|naturalness"
+    assert metadata["failure_primary_bucket"] == "grammar"
+    assert metadata["review_focus"] == "grammar|domain|naturalness"
+
+
+def test_build_failure_review_metadata_marks_pass_rows_for_domain_review() -> None:
+    metadata = build_failure_review_metadata(
+        {
+            "rule_gate_status": "pass",
+            "domain_ids": ["medical"],
+            "wz_sentence": "饭吃爻罢。",
+            "validation": {"grammar_reasons": ["sentence_final_ba_overused"]},
+        }
+    )
+    assert metadata["failure_buckets"] == ""
+    assert metadata["failure_primary_bucket"] == ""
+    assert metadata["review_focus"] == "domain|grammar"

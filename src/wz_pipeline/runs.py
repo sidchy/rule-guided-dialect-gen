@@ -10,6 +10,9 @@ from typing import Any
 from .paths import RUNS_DIR, ensure_dir
 
 
+FAILURE_BUCKET_ORDER = ("grammar", "domain", "naturalness")
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]+", "-", text).strip("-").lower()
 
@@ -78,6 +81,53 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _normalize_count_map(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    counts: dict[str, int] = {}
+    for key, raw_count in value.items():
+        name = str(key).strip()
+        if not name:
+            continue
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError):
+            continue
+        if count <= 0:
+            continue
+        counts[name] = count
+    return counts
+
+
+def _top_counts(value: Any, *, limit: int = 5, preferred_order: tuple[str, ...] | None = None) -> list[dict[str, int | str]]:
+    counts = _normalize_count_map(value)
+    order_index = {name: index for index, name in enumerate(preferred_order or ())}
+    ranked = sorted(
+        counts.items(),
+        key=lambda item: (-item[1], order_index.get(item[0], len(order_index)), item[0]),
+    )
+    return [{"name": name, "count": count} for name, count in ranked[:limit]]
+
+
+def build_failure_analysis(extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = extra or {}
+    rule_fail_count = int(payload.get("rule_fail_count") or 0)
+    bucket_counts = _normalize_count_map(payload.get("rule_fail_bucket_counts"))
+    primary_bucket = ""
+    for item in _top_counts(bucket_counts, limit=1, preferred_order=FAILURE_BUCKET_ORDER):
+        primary_bucket = str(item["name"])
+    if not rule_fail_count and not bucket_counts:
+        return {}
+    return {
+        "rule_fail_count": rule_fail_count,
+        "bucket_counts": bucket_counts,
+        "primary_bucket": primary_bucket,
+        "top_grammar_reasons": _top_counts(payload.get("grammar_fail_counts")),
+        "top_domain_reasons": _top_counts(payload.get("domain_fail_counts")),
+        "top_naturalness_reasons": _top_counts(payload.get("naturalness_fail_counts")),
+    }
+
+
 def build_summary(
     *,
     pipeline_name: str,
@@ -91,16 +141,20 @@ def build_summary(
     lane_human_pass_rate: dict[str, float] | None = None,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    machine_metrics = {
+        "raw_count": raw_count,
+        "rule_pass_count": rule_pass_count,
+        "rule_pass_rate": round(rule_pass_count / max(1, raw_count), 4),
+    }
+    failure_analysis = build_failure_analysis(extra)
+    if failure_analysis:
+        machine_metrics["failure_analysis"] = failure_analysis
     return {
         "pipeline_name": pipeline_name,
         "run_id": run_id,
         "generated_at": datetime.now().isoformat(),
         "config": config,
-        "machine_metrics": {
-            "raw_count": raw_count,
-            "rule_pass_count": rule_pass_count,
-            "rule_pass_rate": round(rule_pass_count / max(1, raw_count), 4),
-        },
+        "machine_metrics": machine_metrics,
         "human_metrics": {
             "reviewed_count": reviewed_count,
             "human_pass_count": human_pass_count,
@@ -110,4 +164,3 @@ def build_summary(
         },
         "extra": extra or {},
     }
-

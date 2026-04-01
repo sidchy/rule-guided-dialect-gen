@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import apply_contract, normalize_support_words, stable_sample_id
+from .failure_taxonomy import classify_rule_fail_buckets
 from .grammar_config import load_grammar_config
 from .grammar_spec import relevant_spec_labels
 from .jsonl import write_jsonl
@@ -24,6 +25,9 @@ REVIEW_COLUMNS = [
     "domain_required_terms",
     "domain_blocked_terms",
     "domain_review_notes",
+    "failure_buckets",
+    "failure_primary_bucket",
+    "review_focus",
     "wz_sentence",
     "zh_sentence",
     "rule_gate_status",
@@ -119,6 +123,44 @@ def build_grammar_review_metadata(row: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def build_failure_review_metadata(row: dict[str, Any]) -> dict[str, str]:
+    validation = row.get("validation") if isinstance(row.get("validation"), dict) else {}
+    reasons = validation.get("reasons")
+    if not isinstance(reasons, list):
+        reasons = []
+    failure_buckets = classify_rule_fail_buckets(reasons)
+    primary_bucket = failure_buckets[0] if failure_buckets else ""
+
+    review_focus_parts: list[str] = []
+    if failure_buckets:
+        review_focus_parts.extend(failure_buckets)
+    else:
+        if row.get("domain_ids"):
+            review_focus_parts.append("domain")
+        grammar_metadata = build_grammar_review_metadata(row)
+        if (
+            grammar_metadata["grammar_markers"]
+            or grammar_metadata["grammar_auto_flags"]
+            or grammar_metadata["grammar_spec_sections"]
+        ):
+            review_focus_parts.append("grammar")
+
+    ordered_focus: list[str] = []
+    seen: set[str] = set()
+    for item in review_focus_parts:
+        clean = str(item).strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        ordered_focus.append(clean)
+
+    return {
+        "failure_buckets": "|".join(failure_buckets),
+        "failure_primary_bucket": primary_bucket,
+        "review_focus": "|".join(ordered_focus),
+    }
+
+
 def export_review_tsv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -128,6 +170,7 @@ def export_review_tsv(path: Path, rows: list[dict[str, Any]]) -> None:
             core_word = _resolve_core_word(row)
             support_words = _resolve_support_words(row, core_word)
             grammar_metadata = build_grammar_review_metadata(row)
+            failure_metadata = build_failure_review_metadata(row)
             sample_id = str(row.get("sample_id", "")).strip()
             if not sample_id and row.get("origin_run_id") and row.get("pipeline_name"):
                 sample_id = stable_sample_id(
@@ -161,6 +204,9 @@ def export_review_tsv(path: Path, rows: list[dict[str, Any]]) -> None:
                     "domain_review_notes": " | ".join(
                         str(item).strip() for item in row.get("domain_review_notes", []) if str(item).strip()
                     ),
+                    "failure_buckets": failure_metadata["failure_buckets"],
+                    "failure_primary_bucket": failure_metadata["failure_primary_bucket"],
+                    "review_focus": failure_metadata["review_focus"],
                     "wz_sentence": row.get("wz_sentence", ""),
                     "zh_sentence": row.get("zh_sentence", ""),
                     "rule_gate_status": normalize_rule_gate_status(

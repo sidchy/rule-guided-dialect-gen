@@ -2024,6 +2024,15 @@ def main():
     print(f"Raw sentences: {len(all_raw_results)}")
     print(f"Rule-pass rows: {len(passed)} ({summary['machine_metrics']['rule_pass_rate']*100:.1f}%)")
     print(f"Rule-fail rows: {len(all_rule_results) - len(passed)}")
+    failure_analysis = summary["machine_metrics"].get("failure_analysis") or {}
+    if failure_analysis:
+        print(f"Fail buckets: {failure_analysis.get('bucket_counts', {})}")
+        if failure_analysis.get("top_grammar_reasons"):
+            print(f"Top grammar fails: {failure_analysis['top_grammar_reasons'][:3]}")
+        if failure_analysis.get("top_domain_reasons"):
+            print(f"Top domain fails: {failure_analysis['top_domain_reasons'][:3]}")
+        if failure_analysis.get("top_naturalness_reasons"):
+            print(f"Top naturalness fails: {failure_analysis['top_naturalness_reasons'][:3]}")
     print(f"Time: {total_elapsed:.0f}s ({total_elapsed/60:.1f}min)")
     print(f"Scene distribution: {dict(scene_pass_counts)}")
     print(f"\nOutput files:")
