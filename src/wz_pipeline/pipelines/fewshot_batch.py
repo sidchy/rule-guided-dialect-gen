@@ -37,6 +37,7 @@ from build_controlled_generation_assets import SCENE_CATALOG, SEMANTIC_CLASS_HIN
 from generate_controlled_sentences import build_client
 from wz_pipeline.contracts import apply_contract
 from wz_pipeline.dialect import ACTIVE_DIALECT_CONFIG
+from wz_pipeline.domain_config import build_domain_context, normalize_domain_ids
 from wz_pipeline.grammar_guardrails import (
     build_generation_grammar_prompt_rules,
     build_generation_grammar_user_rules,
@@ -925,8 +926,15 @@ def build_task(
     task_id: str,
     lane: str,
     core_tier: str,
+    domain_ids: list[str],
 ) -> dict[str, Any]:
-    banned_terms = global_deny_terms() | scene_deny_terms(scene_id) | (SHOPPING_OLD_MONEY_TERMS if scene_id == "shopping_payment" else set())
+    domain_context = build_domain_context(domain_ids, scene_id=scene_id)
+    banned_terms = (
+        global_deny_terms()
+        | scene_deny_terms(scene_id)
+        | set(domain_context.get("blocked_terms") or [])
+        | (SHOPPING_OLD_MONEY_TERMS if scene_id == "shopping_payment" else set())
+    )
     prompt_examples, examples_contaminated = prompt_examples_for_task(scene_id, examples, banned_terms)
     example_block = "\n".join(
         f"  {i+1}. {DIALECT_NAME}：{ex['wz_sentence']}\n     {STANDARD_LANGUAGE_LABEL}：{ex['zh_sentence']}"
@@ -937,6 +945,14 @@ def build_task(
         for w in support_words
     ) or "  - 无"
     banned_block = "\n".join(f"  - {term}" for term in sorted(banned_terms)) or "  - 无"
+    domain_required_block = "\n".join(
+        f"  - {term}" for term in (domain_context.get("required_terms") or [])
+    ) or "  - 无"
+    domain_preferred_block = "\n".join(
+        f"  - {term}" for term in (domain_context.get("preferred_terms") or [])
+    ) or "  - 无"
+    domain_notes = domain_context.get("prompt_notes") or []
+    domain_note_block = "\n".join(f"  - {note}" for note in domain_notes) or "  - 无"
     contamination_note = ""
     if examples_contaminated:
         contamination_note = "\n注意：旧材料里有过时说法，只学句式，不要复用旧词。"
@@ -955,8 +971,17 @@ def build_task(
 辅助词汇（只有自然时才用，最多用 1 个）：
 {support_block}
 
+领域必用词（如果给了，就至少自然地用 1 个，不要硬塞）：
+{domain_required_block}
+
+领域优先词（自然时优先考虑，可以不用全带）：
+{domain_preferred_block}
+
 禁止词汇（即使参考例句出现，也绝对不要写进新句子）：
 {banned_block}{contamination_note}{shopping_amount_note}
+
+领域补充说明：
+{domain_note_block}
 
 请额外遵守这些{DIALECT_NAME}语法约束：
 {grammar_user_rules}
@@ -993,6 +1018,13 @@ def build_task(
         "core_word_def": core_word["definition"],
         "support_words": [w["wz_word"] for w in support_words],
         "support_word_defs": {w["wz_word"]: w["definition"] for w in support_words},
+        "domain_ids": list(domain_context.get("domain_ids") or []),
+        "domain_labels": list(domain_context.get("domain_labels") or []),
+        "domain_required_terms": list(domain_context.get("required_terms") or []),
+        "domain_preferred_terms": list(domain_context.get("preferred_terms") or []),
+        "domain_blocked_terms": list(domain_context.get("blocked_terms") or []),
+        "domain_prompt_notes": list(domain_context.get("prompt_notes") or []),
+        "domain_review_notes": list(domain_context.get("review_notes") or []),
         "target_words": [core_word["wz_word"]] + [w["wz_word"] for w in support_words],
         "approved_modern_terms": approved_modern_terms,
         "banned_terms": banned_terms_sorted,
@@ -1009,6 +1041,7 @@ def create_tasks_balanced(
     seed: int = 42,
     scene_filter: list[str] | None = None,
     food_modern_trial_ratio: float = 0.25,
+    domain_ids: list[str] | None = None,
 ) -> list[dict]:
     """Create tasks with scene balance, anchor examples, and core-word-driven prompts."""
     rng = random.Random(seed)
@@ -1205,7 +1238,7 @@ def create_tasks_balanced(
                     continue
                 used_task_signatures.add(signature)
                 tid = f"fs_{hashlib.md5(f'{scene}_{len(tasks)}_{seed}'.encode()).hexdigest()[:10]}"
-                task = build_task(exs, core_word, support_words, scene, tid, lane, core_tier)
+                task = build_task(exs, core_word, support_words, scene, tid, lane, core_tier, domain_ids or [])
                 if lane == "food_modern_trial":
                     food_trial_done += 1
                     used_trial_core_surfaces.add(core_word_surface)
@@ -1302,6 +1335,9 @@ def validate_sentence(
     core_tier: str,
     approved_modern_terms: list[str],
     banned_terms: list[str],
+    domain_required_terms: list[str],
+    domain_preferred_terms: list[str],
+    domain_blocked_terms: list[str],
 ):
     reasons = []
     wz_clean = clean_wz(wz)
@@ -1323,6 +1359,9 @@ def validate_sentence(
     found_support = sorted({w for w in support_words if w in wz_clean})
     approved_modern_hits = sorted({w for w in approved_modern_terms if w in wz_clean})
     banned_term_hits = sorted({w for w in banned_terms if w in wz_clean})
+    domain_required_hits = sorted({w for w in domain_required_terms if w in wz_clean})
+    domain_preferred_hits = sorted({w for w in domain_preferred_terms if w in wz_clean})
+    domain_blocked_hits = sorted({w for w in domain_blocked_terms if w in wz_clean})
     coverage_hits = len(set(found_known) | set(approved_modern_hits))
     if not core_present:
         reasons.append("core_word_missing")
@@ -1333,6 +1372,10 @@ def validate_sentence(
         reasons.append(f"support_words_overused:{len(found_support)}")
     if banned_term_hits:
         reasons.append(f"banned_terms:{','.join(banned_term_hits)}")
+    if domain_blocked_hits:
+        reasons.append(f"domain_blocked_terms:{','.join(domain_blocked_hits)}")
+    if domain_required_terms and not domain_required_hits:
+        reasons.append("domain_required_terms_missing")
     for finding in unsupported_surface_terms:
         reasons.append(f"source_surface_missing:{finding['surface']}")
 
@@ -1358,6 +1401,9 @@ def validate_sentence(
         "found_support_words": len(found_support),
         "approved_modern_hits": approved_modern_hits,
         "banned_term_hits": banned_term_hits,
+        "domain_required_hits": domain_required_hits,
+        "domain_preferred_hits": domain_preferred_hits,
+        "domain_blocked_hits": domain_blocked_hits,
         "lane": lane,
         "core_tier": core_tier,
         "mandarin_markers": mandarin_hits,
@@ -1434,6 +1480,12 @@ def main():
         action="store_true",
         help="Skip the second-pass grammar repair step for sentences with high-risk function words.",
     )
+    parser.add_argument(
+        "--domains",
+        type=str,
+        default="",
+        help="Comma-separated domain ids from configs/domain_catalog.json to inject into generation and review.",
+    )
     args = parser.parse_args()
 
     if args.resume and not args.run_id:
@@ -1460,6 +1512,7 @@ def main():
         "seed": args.seed,
         "sleep": args.sleep,
         "scenes": [],
+        "domains": [],
         "food_modern_trial_ratio": args.food_modern_trial_ratio,
         "grammar_repair_enabled": not args.disable_grammar_repair,
         "grammar_spec_path": str(GRAMMAR_SPEC_PATH),
@@ -1472,10 +1525,13 @@ def main():
     examples_by_scene = load_examples_by_scene()
     words_by_scene = load_words_by_scene()
     selected_scenes = normalize_scene_list(args.scenes)
+    selected_domains = normalize_domain_ids(args.domains)
     config["scenes"] = selected_scenes or DEFAULT_SCENES
+    config["domains"] = selected_domains
 
     print(f"Known WZ words (2-4 chars): {len(known_words)}")
     print(f"Selected scenes: {selected_scenes or DEFAULT_SCENES}")
+    print(f"Selected domains: {selected_domains or ['<none>']}")
 
     # Load existing sentences for dedup
     existing = set()
@@ -1502,6 +1558,7 @@ def main():
         args.seed,
         scene_filter=selected_scenes,
         food_modern_trial_ratio=args.food_modern_trial_ratio,
+        domain_ids=selected_domains,
     )
 
     # Filter out already-done tasks
@@ -1568,6 +1625,9 @@ def main():
                     core_tier=task.get("core_tier", "stable"),
                     approved_modern_terms=task.get("approved_modern_terms", []),
                     banned_terms=task.get("banned_terms", []),
+                    domain_required_terms=task.get("domain_required_terms", []),
+                    domain_preferred_terms=task.get("domain_preferred_terms", []),
+                    domain_blocked_terms=task.get("domain_blocked_terms", []),
                 )
                 result = {
                     "task_id": task["task_id"],
@@ -1581,6 +1641,13 @@ def main():
                     "core_word_def": task.get("core_word_def", ""),
                     "support_words": task["support_words"],
                     "support_word_defs": task.get("support_word_defs", {}),
+                    "domain_ids": task.get("domain_ids", []),
+                    "domain_labels": task.get("domain_labels", []),
+                    "domain_required_terms": task.get("domain_required_terms", []),
+                    "domain_preferred_terms": task.get("domain_preferred_terms", []),
+                    "domain_blocked_terms": task.get("domain_blocked_terms", []),
+                    "domain_prompt_notes": task.get("domain_prompt_notes", []),
+                    "domain_review_notes": task.get("domain_review_notes", []),
                     "target_words": task["target_words"],
                     "approved_modern_terms": task.get("approved_modern_terms", []),
                     "banned_terms": task.get("banned_terms", []),
@@ -1646,13 +1713,18 @@ def main():
     scene_pass_counts = Counter(r.get("scene_id", "") for r in passed)
     banned_term_fail_counts = Counter()
     grammar_fail_counts = Counter()
+    domain_fail_counts = Counter()
     for row in all_rule_results:
         for reason in row["validation"].get("grammar_reasons", []):
             grammar_fail_counts[reason] += 1
         if row.get("rule_gate_status") == "pass":
-            continue
-        for term in row["validation"].get("banned_term_hits", []):
-            banned_term_fail_counts[term] += 1
+            pass
+        else:
+            for term in row["validation"].get("banned_term_hits", []):
+                banned_term_fail_counts[term] += 1
+            for reason in row["validation"].get("reasons", []):
+                if str(reason).startswith("domain_"):
+                    domain_fail_counts[str(reason).split(":", 1)[0]] += 1
     trial_core_pass_counts = Counter(
         r.get("core_word", "")
         for r in passed
@@ -1677,6 +1749,7 @@ def main():
             "core_tier_rule_pass_counts": dict(core_tier_pass_counts),
             "banned_term_fail_counts": dict(banned_term_fail_counts),
             "grammar_fail_counts": dict(grammar_fail_counts),
+            "domain_fail_counts": dict(domain_fail_counts),
             "trial_core_pass_counts": dict(trial_core_pass_counts),
             "policy_version": POLICY_VERSION,
             "provider": args.provider,
@@ -1733,6 +1806,7 @@ def main():
             "lane_pass_counts": dict(lane_pass_counts),
             "core_tier_pass_counts": dict(core_tier_pass_counts),
             "banned_term_fail_counts": dict(banned_term_fail_counts),
+            "domain_fail_counts": dict(domain_fail_counts),
             "trial_core_pass_counts": dict(trial_core_pass_counts),
             "policy_version": POLICY_VERSION,
             "provider": args.provider,

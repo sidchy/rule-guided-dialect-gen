@@ -51,6 +51,7 @@ class DialectRuntimeConfig:
     grammar_spec_path: Path
     grammar_rules_path: Path
     scene_catalog_path: Path
+    domain_catalog_path: Path
 
     def resolve_overlay_path(self, value: str | Path) -> Path:
         candidate = Path(value)
@@ -104,6 +105,7 @@ def load_dialect_config(dialect: str | None = None) -> DialectRuntimeConfig:
     scene_catalog_candidate = dialect_dir / str(raw.get("scene_catalog") or "configs/scene_catalog.json")
     scene_catalog_fallback = WENZHOU_FALLBACK_SCENE_CATALOG if dialect_key == "wenzhou" else None
     scene_catalog_path = _pick_existing(scene_catalog_candidate, scene_catalog_fallback)
+    domain_catalog_path = dialect_dir / str(raw.get("domain_catalog") or "configs/domain_catalog.json")
 
     return DialectRuntimeConfig(
         dialect_key=dialect_key,
@@ -128,6 +130,7 @@ def load_dialect_config(dialect: str | None = None) -> DialectRuntimeConfig:
         grammar_spec_path=grammar_spec_path,
         grammar_rules_path=grammar_rules_path,
         scene_catalog_path=scene_catalog_path,
+        domain_catalog_path=domain_catalog_path,
     )
 
 

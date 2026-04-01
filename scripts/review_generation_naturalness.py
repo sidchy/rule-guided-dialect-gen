@@ -62,8 +62,24 @@ def build_grammar_payload(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_domain_payload(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "domain_ids": row.get("domain_ids") or [],
+        "domain_labels": row.get("domain_labels") or [],
+        "domain_required_terms": row.get("domain_required_terms") or [],
+        "domain_preferred_terms": row.get("domain_preferred_terms") or [],
+        "domain_blocked_terms": row.get("domain_blocked_terms") or [],
+        "domain_prompt_notes": row.get("domain_prompt_notes") or [],
+        "domain_review_notes": row.get("domain_review_notes") or [],
+        "domain_required_hits": ((row.get("validation") or {}).get("domain_required_hits") or []),
+        "domain_preferred_hits": ((row.get("validation") or {}).get("domain_preferred_hits") or []),
+        "domain_blocked_hits": ((row.get("validation") or {}).get("domain_blocked_hits") or []),
+    }
+
+
 def build_prompt(row: dict[str, Any]) -> tuple[str, str]:
     grammar_payload = build_grammar_payload(row)
+    domain_payload = build_domain_payload(row)
     system = (
         f"你是{ACTIVE_DIALECT_CONFIG.dialect_name}受控生成质检员。"
         "你只做质量判定，不改写。"
@@ -73,6 +89,7 @@ def build_prompt(row: dict[str, Any]) -> tuple[str, str]:
         "3. 是否和 scene_id 大体匹配；"
         "4. 是否适合后续语音训练；"
         "5. 功能词、体貌、否定、语序是否符合提供的语法规范。"
+        "6. 如果指定了领域词和领域禁用词，要同时判断领域覆盖和领域误用。"
         "如果语义明显别扭，即使格式过关，也必须判 fail。"
         "只输出 JSON object。"
     )
@@ -90,6 +107,7 @@ def build_prompt(row: dict[str, Any]) -> tuple[str, str]:
         "eligible_slot_replacement_ratio": row.get("eligible_slot_replacement_ratio"),
         "pool_compliance_ratio": row.get("pool_compliance_ratio"),
         **grammar_payload,
+        **domain_payload,
         "slots": [
             {
                 "slot_id": slot.get("slot_id"),
@@ -106,6 +124,8 @@ def build_prompt(row: dict[str, Any]) -> tuple[str, str]:
             "issue_types": ["semantic_mismatch | forced_insertion | scene_mismatch | unnatural_wz | speech_training_risk"],
             "grammar_pass": "boolean",
             "grammar_issue_types": ["particle_misuse | aspect_misuse | negation_misuse | object_order | mandarin_leakage | unsupported_form"],
+            "domain_pass": "boolean",
+            "domain_issue_types": ["domain_required_missing | domain_blocked_term | domain_term_misuse | domain_scene_mismatch"],
             "cited_sections": ["grammar section titles"],
             "note": "short Chinese note under 30 chars",
         },
@@ -145,6 +165,10 @@ def normalize_result(result: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(grammar_issue_types, list):
         grammar_issue_types = []
     grammar_issue_types = [str(item) for item in grammar_issue_types][:5]
+    domain_issue_types = result.get("domain_issue_types") or []
+    if not isinstance(domain_issue_types, list):
+        domain_issue_types = []
+    domain_issue_types = [str(item) for item in domain_issue_types][:5]
     cited_sections = result.get("cited_sections") or []
     if not isinstance(cited_sections, list):
         cited_sections = []
@@ -155,6 +179,8 @@ def normalize_result(result: dict[str, Any]) -> dict[str, Any]:
         "critic_issue_types": issue_types,
         "critic_grammar_pass": bool(result.get("grammar_pass", False)),
         "critic_grammar_issue_types": grammar_issue_types,
+        "critic_domain_pass": bool(result.get("domain_pass", False)),
+        "critic_domain_issue_types": domain_issue_types,
         "critic_cited_sections": cited_sections,
         "critic_note": str(result.get("note") or "").strip()[:30],
     }
@@ -167,6 +193,8 @@ def build_error_result(error_message: str) -> dict[str, Any]:
         "critic_issue_types": ["critic_request_failed"],
         "critic_grammar_pass": False,
         "critic_grammar_issue_types": ["critic_request_failed"],
+        "critic_domain_pass": False,
+        "critic_domain_issue_types": ["critic_request_failed"],
         "critic_cited_sections": [],
         "critic_note": error_message[:30],
         "critic_request_failed": True,
@@ -219,6 +247,9 @@ def main() -> None:
                 "issue_type_counts": dict(Counter(issue for item in reviewed_rows for issue in item["critic_issue_types"])),
                 "grammar_issue_type_counts": dict(
                     Counter(issue for item in reviewed_rows for issue in item["critic_grammar_issue_types"])
+                ),
+                "domain_issue_type_counts": dict(
+                    Counter(issue for item in reviewed_rows for issue in item["critic_domain_issue_types"])
                 ),
                 "provider": provider,
                 "model": model,

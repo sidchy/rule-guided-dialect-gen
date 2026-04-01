@@ -22,6 +22,7 @@ PIPELINE_THRESHOLDS_PATH = ACTIVE_DIALECT_CONFIG.pipeline_thresholds_path
 GRAMMAR_SPEC_PATH = ACTIVE_DIALECT_CONFIG.grammar_spec_path
 GRAMMAR_RULES_PATH = ACTIVE_DIALECT_CONFIG.grammar_rules_path
 SCENE_CATALOG_PATH = ACTIVE_DIALECT_CONFIG.scene_catalog_path
+DOMAIN_CATALOG_PATH = ACTIVE_DIALECT_CONFIG.domain_catalog_path
 
 
 def ensure_dir(path: Path) -> Path:

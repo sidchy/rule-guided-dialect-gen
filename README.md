@@ -94,22 +94,23 @@ dialects/你的方言/
 │
 ├── dialect.yaml              ← 【入口1】主配置文件
 │
-├── configs/                  ← 【入口2-3】场景和策略配置
+├── configs/                  ← 【入口2-4】场景、领域和策略配置
 │   ├── scene_policy.json        场景分层（哪些先做、哪些后做）
 │   ├── scene_catalog.json       场景详情（关键词、现代词汇）
+│   ├── domain_catalog.json      领域词表（专用词、禁用词、备注）
 │   ├── trust_policy.json        数据信任层级（通常不改）
 │   └── pipeline_thresholds.json 质量门槛
 │
-├── grammar/                  ← 【入口4-5】语法规则
+├── grammar/                  ← 【入口5-6】语法规则
 │   ├── grammar_spec.md          你的语法参考文档
 │   └── grammar_rules.yaml       机器可执行的语法校验规则
 │
-├── prompts/                  ← 【入口6】LLM Prompt
+├── prompts/                  ← 【入口7】LLM Prompt
 │   ├── generation_system.md     生成 prompt 系统消息
 │   ├── generation_user.md       生成 prompt 用户消息模板
 │   └── repair_system.md         语法修补 prompt
 │
-├── data/                     ← 【入口7】你的数据
+├── data/                     ← 【入口8】你的数据
 │   ├── source_dictionaries/     原始词典文件（xlsx 等）
 │   ├── cleaned/                 清洗后的 JSONL
 │   ├── extracted_training_sentences/  种子句子
@@ -123,7 +124,7 @@ dialects/你的方言/
 
 ---
 
-## 7 个入口详解
+## 8 个入口详解
 
 ### 入口 1: `dialect.yaml` — 方言身份证
 
@@ -162,7 +163,18 @@ dialects/你的方言/
 
 每个场景的关键词、现代词汇、意图描述。用于将词典条目分配到场景、以及在 prompt 中提供场景上下文。
 
-### 入口 4: `grammar/grammar_spec.md` — 语法参考文档
+### 入口 4: `configs/domain_catalog.json` — 领域词表
+
+当用户在运行时指定 `--domains` 时，会从这里读取该轮生成和审查所需的领域专用词、禁用词和补充说明。
+
+适合放：
+
+- 医疗、支付、学校、办公等领域的专用说法
+- 必须出现或优先出现的词
+- 不该混入的词
+- 给生成和审核的备注
+
+### 入口 5: `grammar/grammar_spec.md` — 语法参考文档
 
 放你的方言语法参考。可以是语法书的摘录、论文的整理、或者你自己写的规范。
 
@@ -172,7 +184,7 @@ dialects/你的方言/
 
 **没有语法文档怎么办？** 可以先留空，pipeline 会跳过语法校验。先跑通流程，再逐步补充规则。
 
-### 入口 5: `grammar/grammar_rules.yaml` — 机器可执行的语法规则
+### 入口 6: `grammar/grammar_rules.yaml` — 机器可执行的语法规则
 
 将语法规则写成正则表达式，让机器自动检测。例如：
 
@@ -186,7 +198,7 @@ high_risk_patterns:
 
 **不确定怎么写？** 每个字段在模板文件中都有注释和温州话的示例。
 
-### 入口 6: `prompts/` — LLM Prompt 模板
+### 入口 7: `prompts/` — LLM Prompt 模板
 
 三个 prompt 文件：
 
@@ -196,7 +208,7 @@ high_risk_patterns:
 | `generation_user.md` | 给 LLM 具体的任务（例句、核心词等） | 每个 task |
 | `repair_system.md` | 告诉修补 LLM 如何最小幅度修改 | 触发修补时 |
 
-### 入口 7: `data/source_dictionaries/` — 原始数据
+### 入口 8: `data/source_dictionaries/` — 原始数据
 
 把你的方言词典文件（xlsx、csv、jsonl 等）放在这里。
 

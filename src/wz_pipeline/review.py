@@ -20,6 +20,10 @@ REVIEW_COLUMNS = [
     "lane",
     "core_word",
     "support_words",
+    "domain_ids",
+    "domain_required_terms",
+    "domain_blocked_terms",
+    "domain_review_notes",
     "wz_sentence",
     "zh_sentence",
     "rule_gate_status",
@@ -147,6 +151,16 @@ def export_review_tsv(path: Path, rows: list[dict[str, Any]]) -> None:
                     "lane": row.get("lane", ""),
                     "core_word": core_word,
                     "support_words": "|".join(support_words),
+                    "domain_ids": "|".join(str(item).strip() for item in row.get("domain_ids", []) if str(item).strip()),
+                    "domain_required_terms": "|".join(
+                        str(item).strip() for item in row.get("domain_required_terms", []) if str(item).strip()
+                    ),
+                    "domain_blocked_terms": "|".join(
+                        str(item).strip() for item in row.get("domain_blocked_terms", []) if str(item).strip()
+                    ),
+                    "domain_review_notes": " | ".join(
+                        str(item).strip() for item in row.get("domain_review_notes", []) if str(item).strip()
+                    ),
                     "wz_sentence": row.get("wz_sentence", ""),
                     "zh_sentence": row.get("zh_sentence", ""),
                     "rule_gate_status": normalize_rule_gate_status(

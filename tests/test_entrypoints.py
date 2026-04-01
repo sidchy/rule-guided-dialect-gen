@@ -19,6 +19,11 @@ def test_review_generation_naturalness_help_runs_from_checkout() -> None:
     assert "usage:" in result.stdout
 
 
+def test_fewshot_batch_source_mentions_domains_flag() -> None:
+    source = (ROOT / "src" / "wz_pipeline" / "pipelines" / "fewshot_batch.py").read_text(encoding="utf-8")
+    assert "--domains" in source
+
+
 def test_fewshot_batch_uses_empty_scene_terms_for_unconfigured_dialect() -> None:
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT / "src")
@@ -32,7 +37,8 @@ def test_fewshot_batch_uses_empty_scene_terms_for_unconfigured_dialect() -> None
                 "from wz_pipeline.pipelines import fewshot_batch as f; "
                 "print(json.dumps({"
                 "'shopping_prompt_blocked_terms': sorted(f.SHOPPING_PROMPT_BLOCKED_TERMS), "
-                "'food_support_priority_terms': sorted(f.FOOD_SUPPORT_PRIORITY_TERMS)"
+                "'food_support_priority_terms': sorted(f.FOOD_SUPPORT_PRIORITY_TERMS), "
+                "'domains_flag_present': '--domains' in open('src/wz_pipeline/pipelines/fewshot_batch.py', encoding='utf-8').read()"
                 "}, ensure_ascii=False))"
             ),
         ],
@@ -45,3 +51,4 @@ def test_fewshot_batch_uses_empty_scene_terms_for_unconfigured_dialect() -> None
     payload = json.loads(result.stdout)
     assert payload["shopping_prompt_blocked_terms"] == []
     assert payload["food_support_priority_terms"] == []
+    assert payload["domains_flag_present"] is True

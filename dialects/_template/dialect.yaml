@@ -35,6 +35,7 @@ registry_dir: "registry"
 curated_dir: "curated"
 prompts_dir: "prompts"
 scene_catalog: "configs/scene_catalog.json"
+domain_catalog: "configs/domain_catalog.json"
 
 
 # ------ 句子长度约束 [必填] ------

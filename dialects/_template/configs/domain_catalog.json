@@ -1,0 +1,13 @@
+[
+  {
+    "_comment": "可选领域配置。用户在运行时通过 --domains 选择后，会把这些词和备注注入生成与审查链路。",
+    "domain_id": "domain_1",
+    "label": "领域1",
+    "scene_allowlist": ["scene_1"],
+    "required_terms": ["专用词1"],
+    "preferred_terms": ["专用词2", "专用词3"],
+    "blocked_terms": ["不应出现的词"],
+    "prompt_notes": ["生成时优先使用该领域的稳定说法，不要泛化成口水词。"],
+    "review_notes": ["审查时检查专用词是否使用自然、是否跟场景匹配。"]
+  }
+]
