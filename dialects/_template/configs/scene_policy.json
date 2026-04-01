@@ -1,0 +1,17 @@
+{
+  "_comment": "场景分层配置。mainline 场景默认进入批量生成；sidecar 需要额外 gate；candidate 暂不生成。",
+  "mainline_focus_scenes": [
+    "scene_1",
+    "scene_2"
+  ],
+  "sidecar_scenes": [],
+  "candidate_scenes": [],
+  "default_scenes": [
+    "scene_1",
+    "scene_2"
+  ],
+  "priority_scenes": [
+    "scene_1",
+    "scene_2"
+  ]
+}

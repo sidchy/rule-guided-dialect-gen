@@ -1,0 +1,21 @@
+[
+  {
+    "_comment": "每个场景一个对象。scene_id 是英文标识符，label 是显示名。",
+    "scene_id": "scene_1",
+    "label": "场景1的中文名称",
+    "intents": ["意图描述1", "意图描述2"],
+    "zh_keywords": ["关键词1", "关键词2"],
+    "dialect_keywords": ["方言关键词1", "方言关键词2"],
+    "default_required_modern_words": [],
+    "default_preferred_modern_words": []
+  },
+  {
+    "scene_id": "scene_2",
+    "label": "场景2的中文名称",
+    "intents": ["意图描述"],
+    "zh_keywords": ["关键词"],
+    "dialect_keywords": ["方言关键词"],
+    "default_required_modern_words": [],
+    "default_preferred_modern_words": []
+  }
+]

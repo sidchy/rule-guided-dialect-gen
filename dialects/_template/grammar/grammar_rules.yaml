@@ -1,0 +1,96 @@
+# ============================================================
+# grammar_rules.yaml -- 机器可执行的语法校验规则
+# ============================================================
+# 这个文件定义了你的方言中需要机器自动检测的语法规则。
+# 如果你还没有整理好语法规则，可以先留空 —— pipeline 会跳过语法校验。
+#
+# 格式说明：
+#   - pattern 字段使用 Python 正则表达式语法
+#   - 每条规则有一个 name（英文标识符）和 pattern
+#   - 可选的 description 用于人工审核时显示
+# ============================================================
+
+
+# ------ 审核标记词 ------
+# 在导出人工审核 TSV 时，包含这些标记词的句子会被高亮
+# 填入你的方言中需要重点审核的功能词/体标记
+# 留空 [] 表示不做标记
+
+review_markers: []
+# 温州话示例: ["爻", "罢", "著埭", "落去", "未", "冇", "不"]
+# 粤语示例:   ["咗", "紧", "住", "过", "嘅", "唔"]
+
+
+# ------ 语法修补触发 ------
+# 当句子包含匹配此正则的内容时，触发 LLM 语法修补
+# 留空字符串 "" 表示不自动触发修补
+
+repair_trigger_pattern: ""
+# 温州话示例: "(爻|罢|著埭|落去|起罢|啊不|啊未|啊冇|未|冇)"
+
+
+# ------ 完成体标记（如果你的方言有的话）------
+# completion_marker: 完成体标记字符
+# allowed_after_completion: 允许紧跟在完成标记后面的字符集
+# max_completion_count: 一句中最多出现几次
+
+completion_marker: ""
+allowed_after_completion: ""
+max_completion_count: 1
+
+# 温州话示例:
+#   completion_marker: "爻"
+#   allowed_after_completion: "罢，。！？；,.!?;、再就还也阿沃个"
+#   max_completion_count: 1
+
+
+# ------ 句末语气词（如果需要限制数量）------
+
+sentence_final_particle: ""
+max_sentence_final_count: 1
+
+# 温州话示例:
+#   sentence_final_particle: "罢"
+#   max_sentence_final_count: 1
+
+
+# ------ 高风险 pattern ------
+# 每条 pattern 定义一个应该被拦截的错误用法
+# name: 英文标识符（会出现在 validation 结果中）
+# pattern: Python 正则表达式
+# description: 中文说明（可选，用于审核显示）
+
+high_risk_patterns: []
+# 温州话示例:
+#   - name: "completion_object_order"
+#     pattern: "跳爻舞"
+#     description: "完成体宾语语序错误：应为 舞跳爻"
+#   - name: "mandarin_negation"
+#     pattern: "(?:没有|沒有)"
+#     description: "普通话否定混入：应用方言否定词"
+
+
+# ------ 情态动词 + 完成标记 ------
+# 如果你的方言中情态动词后面不能接完成标记，在这里定义
+
+modal_verbs_before_completion:
+  pattern: ""
+# 温州话示例:
+#   pattern: "(?:想|要|会|能|可以|应该)爻"
+
+
+# ------ 语法文档章节映射 ------
+# 当检测到某个标记词时，从 grammar_spec.md 中提取对应章节
+# 用于给 LLM 修补 prompt 提供参考
+# key: 标记词文本
+# value: grammar_spec.md 中的章节标题列表
+
+marker_to_sections: {}
+# 温州话示例:
+#   "爻": ["### 3.1 完成体：`爻`"]
+#   "罢": ["### 3.4 已然体：重读 `罢` 与句末轻读 `罢`"]
+
+reason_to_sections: {}
+# 温州话示例:
+#   "completion_object_order": ["### 3.1 完成体：`爻`"]
+#   "mandarin_negation": ["### 9.1 `不`", "### 9.2 `未`"]

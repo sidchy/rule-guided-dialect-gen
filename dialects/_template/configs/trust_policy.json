@@ -1,0 +1,31 @@
+{
+  "_comment": "数据信任层级配置。通常不需要修改。",
+  "version": "v1",
+  "allowed_upstream_trust_tiers": ["source", "curated"],
+  "source_types": {
+    "raw_source": {
+      "trust_tier": "source",
+      "rule_gate_status": "not_run",
+      "human_review_status": "not_required",
+      "upstream_eligible": true
+    },
+    "extracted_seed": {
+      "trust_tier": "source",
+      "rule_gate_status": "not_run",
+      "human_review_status": "not_required",
+      "upstream_eligible": true
+    },
+    "generated_candidate": {
+      "trust_tier": "candidate",
+      "rule_gate_status": "not_run",
+      "human_review_status": "pending",
+      "upstream_eligible": false
+    },
+    "reviewed_curated": {
+      "trust_tier": "curated",
+      "rule_gate_status": "pass",
+      "human_review_status": "pass",
+      "upstream_eligible": true
+    }
+  }
+}

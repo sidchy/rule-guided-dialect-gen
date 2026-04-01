@@ -1,0 +1,153 @@
+# ============================================================
+# dialect.yaml -- 你的方言项目主配置文件
+# ============================================================
+# 这是整个项目的"入口"。一个新方言只需要：
+#   1. cp -r dialects/_template dialects/你的方言
+#   2. 编辑这个文件
+#   3. 填入词典数据、语法规则、prompt
+#   4. 跑 pipeline
+#
+# 下面每个字段都有注释说明。带 [必填] 的字段必须修改。
+# 带 [可选] 的字段可以保持默认值。
+# ============================================================
+
+# ------ 基本信息 [必填] ------
+
+# 你的方言名称（用于显示和日志）
+dialect_name: "你的方言名"
+
+# 方言短代码（用于 sample_id 前缀、文件命名等，2-6个英文字母）
+dialect_code: "xx"
+
+# 对应的标准语名称（通常是"普通话"；如果你的项目是粤语-英语对照，也可以写"English"）
+standard_language_label: "普通话"
+
+
+# ------ 路径配置 [可选，通常不用改] ------
+# 所有路径相对于本文件所在目录
+
+grammar_spec: "grammar/grammar_spec.md"       # 语法参考文档
+grammar_rules: "grammar/grammar_rules.yaml"   # 机器可执行的语法规则
+configs_dir: "configs"
+data_dir: "data"
+runs_dir: "runs"
+registry_dir: "registry"
+curated_dir: "curated"
+prompts_dir: "prompts"
+scene_catalog: "configs/scene_catalog.json"
+
+
+# ------ 句子长度约束 [必填] ------
+# 生成的句子字符数范围（含标点）
+
+sentence_length:
+  min: 20
+  max: 30
+
+
+# ------ 普通话标记词 [必填] ------
+# 如果生成的"方言"句子里出现 >= 2 个这些词，判定为混入普通话。
+# 根据你的方言特点调整——有些词在你的方言里可能是正常的。
+
+mandarin_markers:
+  - "的话"
+  - "然后"
+  - "但是"
+  - "因为"
+  - "所以"
+  - "而且"
+  - "虽然"
+  - "如果"
+  - "可是"
+  - "或者"
+  - "不过"
+  - "已经"
+  - "正在"
+  - "刚才"
+  - "什么"
+  - "怎么"
+  - "为什么"
+  - "哪里"
+  - "他们"
+  - "她们"
+  - "我们"
+  - "你们"
+  - "非常"
+  - "特别"
+  - "真的是"
+
+
+# ------ 停用词 [可选] ------
+# 这些词不参与关键词提取和场景匹配
+
+stopwords:
+  - "一个"
+  - "一种"
+  - "一件"
+  - "这个"
+  - "那个"
+  - "什么"
+  - "事情"
+  - "东西"
+  - "个"
+  - "了"
+  - "的"
+  - "着"
+  - "过"
+  - "在"
+  - "是"
+  - "有"
+
+
+# ------ 释义过滤 [可选] ------
+# 词典释义中包含这些关键词的条目，不用于生成（通常是语法词、古语等）
+
+bad_definition_hints:
+  - "后置于"
+  - "前置于"
+  - "用于"
+  - "助词"
+  - "量词"
+  - "副词"
+  - "介词"
+  - "连词"
+  - "语气词"
+  - "代词"
+
+archaic_definition_hints:
+  - "旧俗"
+  - "旧时"
+  - "旧称"
+  - "古代"
+  - "古时"
+
+# 如果释义中同时包含这些词，不视为古语
+archaic_allowed_hints:
+  - "今指"
+  - "现在也指"
+
+
+# ------ 表面词校验 [可选] ------
+# 用于 source_surface_guardrails 的常见边界单字
+# 这些字在分词时会被从两端裁掉，不算作"未知词面"
+# 填入你的方言里的常见虚词、代词、助词
+
+boundary_single_chars: "我你他她它的了着过在是有很"
+
+
+# ------ 数据源路径 [可选] ------
+# 用于表面词统计的数据文件（相对路径）
+
+source_data_paths:
+  - "data/cleaned/cleaned_records_primary.jsonl"
+  - "data/extracted_training_sentences/short_8_20.jsonl"
+  - "data/extracted_training_sentences/long_20_30.jsonl"
+
+
+# ------ LLM 提供商 [必填] ------
+# API 密钥在 .env 文件中配置，这里只指定使用哪个提供商
+# 支持：qwen (通义千问), deepseek, 或任何 OpenAI 兼容 API
+
+llm:
+  primary_provider: "qwen"        # 主力模型（用于生成）
+  secondary_provider: "deepseek"  # 备用模型（可用于审核/修补）

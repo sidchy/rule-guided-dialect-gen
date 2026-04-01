@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wz-pipeline"
+version = "0.1.0"
+description = "Engineering loop and data pipeline tooling for the Wenzhou dialect corpus project."
+requires-python = ">=3.11"
+dependencies = [
+  "openai>=1.30.0",
+  "python-dotenv>=1.0.1",
+  "pandas>=2.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.5.0",
+]
+
+[project.scripts]
+wz-extract-training-sentences = "wz_pipeline.pipelines.extract_training_sentences:main"
+wz-build-modern-anchor-candidates = "wz_pipeline.pipelines.modern_anchor_candidates:main"
+wz-generate-fewshot-batch = "wz_pipeline.pipelines.fewshot_batch:main"
+wz-export-review-package = "wz_pipeline.cli.export_review_package:main"
+wz-import-review-results = "wz_pipeline.cli.import_review_results:main"
+wz-promote-reviewed-samples = "wz_pipeline.cli.promote_reviewed_samples:main"
+wz-register-legacy-run = "wz_pipeline.cli.register_legacy_run:main"
+wz-materialize-seed-curated = "wz_pipeline.cli.materialize_seed_curated:main"
+wz-build-training-candidates = "wz_pipeline.cli.build_training_candidates:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100

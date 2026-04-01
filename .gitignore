@@ -1,0 +1,18 @@
+.DS_Store
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+dist/
+build/
+.claude/
+
+# Large data files -- not tracked in git
+*.xlsx
+data/
+runs/
+

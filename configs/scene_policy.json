@@ -1,0 +1,35 @@
+{
+  "mainline_focus_scenes": [
+    "home_life",
+    "food_dining",
+    "transport_trip",
+    "shopping_payment",
+    "weather_safety"
+  ],
+  "sidecar_scenes": [
+    "digital_chat",
+    "work_study"
+  ],
+  "candidate_scenes": [
+    "daily_chat",
+    "health_medical"
+  ],
+  "default_scenes": [
+    "home_life",
+    "food_dining",
+    "transport_trip",
+    "shopping_payment",
+    "weather_safety"
+  ],
+  "priority_scenes": [
+    "home_life",
+    "food_dining",
+    "transport_trip",
+    "shopping_payment",
+    "weather_safety",
+    "health_medical",
+    "work_study",
+    "digital_chat",
+    "daily_chat"
+  ]
+}

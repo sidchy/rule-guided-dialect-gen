@@ -1,0 +1,303 @@
+# ============================================================
+# dialect.yaml -- 温州话项目配置
+# ============================================================
+# 这是 dialects/_template/dialect.yaml 的实际填充示例。
+# 所有值均从现有代码硬编码中提取。
+#
+# 注意：当前代码尚未读取此文件，仍在使用硬编码值。
+# 此文件作为重构目标的参考规格——后续代码改造时将读取此文件。
+# ============================================================
+
+# ------ 基本信息 ------
+
+dialect_name: "温州话"
+dialect_code: "wz"
+standard_language_label: "普通话"
+
+
+# ------ 路径配置 ------
+# 注意：当前实际数据仍在项目根目录下的 data/, configs/ 等。
+# 后续重构时会迁移到此处。以下路径为迁移后的目标路径。
+
+grammar_spec: "grammar/grammar_spec.md"
+grammar_rules: "grammar/grammar_rules.yaml"
+configs_dir: "configs"
+data_dir: "data"
+runs_dir: "runs"
+registry_dir: "registry"
+curated_dir: "curated"
+prompts_dir: "prompts"
+scene_catalog: "configs/scene_catalog.json"
+
+
+# ------ 句子长度约束 ------
+# 来源: fewshot_batch.py:1373-1376
+
+sentence_length:
+  min: 20
+  max: 30
+
+
+# ------ 普通话标记词 ------
+# 来源: fewshot_batch.py:1340-1346 MANDARIN_MARKERS
+# 一句中出现 >= 2 个则判定为混入普通话
+
+mandarin_markers:
+  - "的话"
+  - "然后"
+  - "但是"
+  - "因为"
+  - "所以"
+  - "而且"
+  - "虽然"
+  - "如果"
+  - "可是"
+  - "或者"
+  - "不过"
+  - "已经"
+  - "正在"
+  - "刚才"
+  - "什么"
+  - "怎么"
+  - "为什么"
+  - "哪里"
+  - "这里"
+  - "那里"
+  - "他们"
+  - "她们"
+  - "我们"
+  - "你们"
+  - "非常"
+  - "特别"
+  - "真的是"
+
+
+# ------ 停用词 ------
+# 来源: fewshot_batch.py:128-150 STOPWORDS
+
+stopwords:
+  - "一个"
+  - "一种"
+  - "一件"
+  - "这个"
+  - "那个"
+  - "这里"
+  - "那里"
+  - "什么"
+  - "事情"
+  - "东西"
+  - "个"
+  - "了"
+  - "的"
+  - "着"
+  - "过"
+  - "在"
+  - "是"
+  - "有"
+  - "很"
+  - "真"
+
+
+# ------ 释义过滤 ------
+# 来源: fewshot_batch.py:72-113
+
+bad_definition_hints:
+  - "后置于"
+  - "前置于"
+  - "用于"
+  - "用在"
+  - "俗语"
+  - "助词"
+  - "量词"
+  - "副词"
+  - "介词"
+  - "连词"
+  - "语气词"
+  - "代词"
+  - "作副词"
+  - "在动词后"
+
+non_daily_definition_hints:
+  - "比喻"
+  - "借指"
+  - "引申"
+  - "戏称"
+  - "绰号"
+  - "一种舞"
+  - "一类人"
+
+archaic_definition_hints:
+  - "旧俗"
+  - "旧时"
+  - "旧称"
+  - "古代"
+  - "古时"
+  - "旧式"
+  - "老式"
+  - "银圆"
+  - "酒筵"
+  - "传统木结构"
+  - "旧社会"
+
+archaic_allowed_hints:
+  - "今指"
+  - "现在也指"
+  - "现指"
+
+abstract_time_hints:
+  - "明后天"
+  - "明天"
+  - "后天"
+  - "昨天"
+  - "今天"
+  - "以前"
+  - "以后"
+  - "现在"
+  - "刚才"
+  - "过去"
+  - "过些日子"
+
+
+# ------ 表面词校验 ------
+# 来源: source_surface_guardrails.py:30 BOUNDARY_SINGLE_CHARS
+
+boundary_single_chars: "我你妳尔侬卬伊渠其阿个着了罢啊呢嘛就再还也都把将给在向从跟和同是有未冇不莫会能真显很较更来去起落"
+
+source_data_paths:
+  - "data/cleaned/cleaned_records_primary.jsonl"
+  - "data/extracted_training_sentences/short_8_20.jsonl"
+  - "data/extracted_training_sentences/long_20_30.jsonl"
+  - "data/controlled_generation/assets/replaceable_lexicon.jsonl"
+  - "data/controlled_generation/assets/dense_slot_lexicon_whitelist.jsonl"
+
+
+# ------ 场景特定词表 ------
+# 来源: fewshot_batch.py:152-202
+# 每个场景的优先辅助词、禁止词、金额表达等
+
+scene_terms:
+  food_dining:
+    support_priority_terms:
+      - "米饭"
+      - "鸡蛋"
+      - "苹果"
+      - "葡萄"
+      - "西瓜"
+      - "杨梅"
+      - "牛奶"
+      - "面包"
+      - "奶茶"
+      - "外卖"
+      - "鱼丸"
+      - "汤圆"
+    beverage_terms: ["奶茶", "牛奶", "咖啡", "可乐"]
+    staple_terms: ["米饭", "面包", "外卖", "鱼丸", "汤圆", "鸡蛋"]
+    action_terms: ["吃饭", "烧菜", "煮饭", "点单", "打包"]
+    support_pool_size: 6
+
+  home_life:
+    support_priority_terms:
+      - "洗衣机"
+      - "冰箱"
+      - "空调"
+      - "热水器"
+      - "电饭煲"
+      - "微波炉"
+      - "路由器"
+      - "阳台"
+      - "厨房"
+      - "书房"
+      - "收拾"
+      - "整理"
+      - "晾起"
+    support_pool_size: 5
+
+  shopping_payment:
+    support_priority_terms:
+      - "付款码"
+      - "收款码"
+      - "支付宝"
+      - "二维码"
+      - "订单"
+      - "快递"
+      - "快递柜"
+      - "优惠券"
+      - "会员码"
+      - "超市"
+      - "网店"
+      - "直播间"
+      - "收银台"
+      - "客服"
+      - "售后"
+      - "电商"
+      - "番钿"
+      - "十番钿"
+      - "五十番钿"
+      - "一百番钿"
+      - "两百番钿"
+      - "几十番钿"
+      - "百来番钿"
+    old_money_terms: ["银圆"]
+    prompt_blocked_terms: ["银圆", "屋宕", "银行", "鸡卵"]
+    amount_terms: ["番钿", "十番钿", "五十番钿", "一百番钿", "两百番钿", "几十番钿", "百来番钿"]
+    support_pool_size: 5
+
+  transport_trip:
+    support_priority_terms:
+      - "地铁"
+      - "高铁"
+      - "动车"
+      - "轻轨"
+      - "网约车"
+      - "共享单车"
+      - "导航"
+      - "车站"
+      - "地铁站"
+      - "高铁站"
+      - "机场"
+      - "候车室"
+      - "安检口"
+      - "行李箱"
+      - "车站大道"
+      - "五马街"
+      - "南塘街"
+    support_pool_size: 5
+
+  weather_safety:
+    support_priority_terms:
+      - "雨伞"
+      - "雨衣"
+      - "口罩"
+      - "充电宝"
+      - "保温杯"
+      - "头盔"
+      - "应急包"
+      - "应急灯"
+      - "地库"
+      - "路口"
+      - "预警"
+      - "预报"
+      - "避雨"
+      - "保暖"
+      - "防滑"
+    support_pool_size: 5
+
+  digital_chat:
+    support_pool_size: 4
+
+  work_study:
+    support_pool_size: 4
+
+
+# ------ LLM 提供商 ------
+
+llm:
+  primary_provider: "qwen"
+  secondary_provider: "deepseek"
+
+
+# ------ 生成策略 ------
+# 来源: fewshot_batch.py:151, 1071
+
+policy_version: "track_b_mainline_v3_2026-04-01"
+food_modern_trial_ratio: 0.25

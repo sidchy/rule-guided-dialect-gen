@@ -1,0 +1,8 @@
+{
+  "mainline_min_reviewed": 50,
+  "mainline_min_human_pass_rate": 0.7,
+  "mainline_min_scene_human_pass": 5,
+  "sidecar_min_reviewed": 20,
+  "sidecar_anchor_threshold": 8
+}
+

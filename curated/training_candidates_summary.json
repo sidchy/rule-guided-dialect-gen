@@ -1,0 +1,19 @@
+{
+  "pipeline_name": "build_training_candidates",
+  "generated_at": "2026-04-01T14:25:56.373489",
+  "counts": {
+    "input_seed_count": 3674,
+    "input_generated_reviewed_count": 0,
+    "accepted_source_count": 3674,
+    "accepted_curated_count": 0,
+    "output_total_count": 3674,
+    "deduped_count": 0,
+    "skipped_counts": {}
+  },
+  "config": {
+    "seed_input": "/Users/sidneychai/Documents/微调用温州话语料/curated/seed_sentences.jsonl",
+    "generated_input": "/Users/sidneychai/Documents/微调用温州话语料/curated/generated_reviewed.jsonl",
+    "output": "/Users/sidneychai/Documents/微调用温州话语料/curated/training_candidates.jsonl",
+    "summary_output": "/Users/sidneychai/Documents/微调用温州话语料/curated/training_candidates_summary.json"
+  }
+}
