@@ -142,6 +142,45 @@ SCENE_SUPPORT_POOL_SIZES = {
 }
 
 
+def domain_term_priority(
+    surface: str,
+    *,
+    definition: str = "",
+    domain_context: dict[str, Any] | None = None,
+) -> int:
+    context = domain_context or {}
+    required_terms = set(context.get("required_terms") or [])
+    preferred_terms = set(context.get("preferred_terms") or [])
+    clean_surface = str(surface or "").strip()
+    clean_definition = str(definition or "").strip()
+    if clean_surface in required_terms:
+        return 3
+    if clean_surface in preferred_terms:
+        return 2
+    if clean_definition and any(term and term in clean_definition for term in required_terms):
+        return 2
+    if clean_definition and any(term and term in clean_definition for term in preferred_terms):
+        return 1
+    return 0
+
+
+def domain_text_score(domain_context: dict[str, Any] | None, *texts: str | None) -> int:
+    context = domain_context or {}
+    required_terms = set(context.get("required_terms") or [])
+    preferred_terms = set(context.get("preferred_terms") or [])
+    if not required_terms and not preferred_terms:
+        return 0
+    merged = " ".join(str(text or "") for text in texts if text)
+    score = 0
+    for term in required_terms:
+        if term and term in merged:
+            score += 3
+    for term in preferred_terms:
+        if term and term in merged:
+            score += 1
+    return score
+
+
 def clean_wz(text: str) -> str:
     text = PAREN_RE.sub("", text)
     return re.sub(r"[\s\u3000]+", "", text).strip()
@@ -794,6 +833,42 @@ def related_examples(anchor: dict[str, Any], scene_examples: list[dict], limit: 
     return selected
 
 
+def prioritize_anchor_candidates(
+    anchor_candidates: list[dict[str, Any]],
+    *,
+    domain_context: dict[str, Any] | None,
+    rng: random.Random,
+) -> list[dict[str, Any]]:
+    if not anchor_candidates:
+        return []
+    scored = [
+        (
+            (
+                domain_text_score(
+                    domain_context,
+                    example.get("wz_word", ""),
+                    example.get("definition", ""),
+                    example.get("zh_sentence", ""),
+                    example.get("wz_sentence", ""),
+                ),
+                scene_match_score(
+                    str(example.get("scene_id") or ""),
+                    example.get("wz_word", ""),
+                    example.get("definition", ""),
+                    example.get("zh_sentence", ""),
+                    example.get("wz_sentence", ""),
+                ),
+                str(example.get("wz_word") or ""),
+            ),
+            example,
+        )
+        for example in anchor_candidates
+    ]
+    rng.shuffle(scored)
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [example for _, example in scored]
+
+
 def select_core_and_support_words(
     anchor: dict[str, Any],
     scene_words: list[dict[str, Any]],
@@ -801,6 +876,7 @@ def select_core_and_support_words(
     scene_id: str,
     rng: random.Random | None = None,
     forced_core_word: dict[str, Any] | None = None,
+    domain_context: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     anchor_sig = example_signature(anchor)
     core_word: dict[str, Any] | None = None
@@ -831,6 +907,42 @@ def select_core_and_support_words(
         if 2 <= len(str(anchor_word["wz_word"])) <= 4 and core_word_looks_usable(anchor_word, scene_id, anchor):
             core_word = anchor_word
 
+    ranked_domain_core_candidates: list[tuple[tuple[int, int, int, str], dict[str, Any]]] = []
+    if forced_core_word is None:
+        for word in scene_words:
+            wz_word = str(word.get("wz_word") or "").strip()
+            if not core_word_looks_usable(word, scene_id, anchor):
+                continue
+            domain_priority = domain_term_priority(
+                wz_word,
+                definition=str(word.get("definition") or ""),
+                domain_context=domain_context,
+            )
+            if domain_priority <= 0:
+                continue
+            ranked_domain_core_candidates.append(
+                (
+                    (
+                        domain_priority,
+                        scene_match_score(scene_id, wz_word, word.get("definition", "")),
+                        int(word.get("modern_priority", 0)),
+                        wz_word,
+                    ),
+                    word,
+                )
+            )
+        ranked_domain_core_candidates.sort(key=lambda item: item[0], reverse=True)
+        anchor_domain_priority = domain_term_priority(
+            str(core_word.get("wz_word") or "") if core_word else "",
+            definition=str(core_word.get("definition") or "") if core_word else "",
+            domain_context=domain_context,
+        )
+        if ranked_domain_core_candidates:
+            best_domain_core = ranked_domain_core_candidates[0][1]
+            best_priority = ranked_domain_core_candidates[0][0][0]
+            if core_word is None or (best_priority > anchor_domain_priority and best_priority >= 2):
+                core_word = best_domain_core
+
     ranked_support: list[tuple[tuple[int, int, int, float, str], dict[str, Any]]] = []
     example_keywords = extract_keywords(*(example.get("zh_sentence") for example in examples))
     combined_sig = anchor_sig + [keyword for keyword in example_keywords if keyword not in set(anchor_sig)]
@@ -856,11 +968,17 @@ def select_core_and_support_words(
         if score <= 0 and not word.get("is_modern", False):
             continue
         scene_priority = support_priority(scene_id, core_surface, word)
+        domain_priority = domain_term_priority(
+            wz_word,
+            definition=str(word.get("definition") or ""),
+            domain_context=domain_context,
+        )
         if scene_id == "food_dining" and core_surface == "焯菜" and wz_word in FOOD_BEVERAGE_TERMS:
             continue
         ranked_support.append(
             (
                 (
+                    domain_priority,
                     scene_priority,
                     score,
                     int(word.get("modern_priority", 0)),
@@ -876,12 +994,33 @@ def select_core_and_support_words(
     ranked_support.sort(key=lambda item: item[0], reverse=True)
     support_words: list[dict[str, Any]] = []
     support_candidates = [word for _, word in ranked_support]
+    required_support_candidates = [
+        word
+        for word in support_candidates
+        if domain_term_priority(
+            str(word.get("wz_word") or ""),
+            definition=str(word.get("definition") or ""),
+            domain_context=domain_context,
+        )
+        >= 3
+    ]
+    if required_support_candidates and domain_term_priority(
+        core_surface,
+        definition=str(core_word.get("definition") or "") if core_word else "",
+        domain_context=domain_context,
+    ) < 3:
+        support_candidates = required_support_candidates + [
+            word for word in support_candidates if word not in required_support_candidates
+        ]
     if len(support_candidates) > 1 and rng is not None:
         pool_size = SCENE_SUPPORT_POOL_SIZES.get(scene_id, 4)
-        pool = support_candidates[: min(pool_size, len(support_candidates))]
-        support_candidates = [rng.choice(pool) if rng is not None else pool[0]] + [
-            word for word in support_candidates if word not in pool
-        ]
+        if required_support_candidates:
+            pool = required_support_candidates[: min(pool_size, len(required_support_candidates))]
+            chosen = pool[0]
+        else:
+            pool = support_candidates[: min(pool_size, len(support_candidates))]
+            chosen = rng.choice(pool) if rng is not None else pool[0]
+        support_candidates = [chosen] + [word for word in support_candidates if word != chosen]
 
     for word in support_candidates:
         wz_word = str(word.get("wz_word") or "").strip()
@@ -927,8 +1066,9 @@ def build_task(
     lane: str,
     core_tier: str,
     domain_ids: list[str],
+    domain_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    domain_context = build_domain_context(domain_ids, scene_id=scene_id)
+    domain_context = domain_context or build_domain_context(domain_ids, scene_id=scene_id)
     banned_terms = (
         global_deny_terms()
         | scene_deny_terms(scene_id)
@@ -1047,6 +1187,11 @@ def create_tasks_balanced(
     rng = random.Random(seed)
     tasks = []
     used_task_signatures: set[tuple[str, str, frozenset[str]]] = set()
+    selected_domain_ids = normalize_domain_ids(domain_ids)
+    scene_domain_contexts = {
+        scene_id: build_domain_context(selected_domain_ids, scene_id=scene_id)
+        for scene_id in PRIORITY_SCENES
+    }
 
     # Determine which scenes have enough data
     allowed_scenes = set(scene_filter or PRIORITY_SCENES)
@@ -1055,6 +1200,10 @@ def create_tasks_balanced(
         if s in allowed_scenes
         if s in examples_by_scene and len(examples_by_scene[s]) >= 3
         and s in words_by_scene and len(words_by_scene[s]) >= 3
+        and (
+            not selected_domain_ids
+            or bool(scene_domain_contexts.get(s, {}).get("domain_ids"))
+        )
         and (
             s not in MODERN_SIDECAR_SCENES
             or MODERN_ANCHOR_GATE.get(s, {}).get("threshold_met", False)
@@ -1067,6 +1216,10 @@ def create_tasks_balanced(
             s for s in examples_by_scene
             if s in allowed_scenes
             if len(examples_by_scene[s]) >= 3
+            and (
+                not selected_domain_ids
+                or bool(scene_domain_contexts.get(s, {}).get("domain_ids"))
+            )
             and (
                 s not in MODERN_SIDECAR_SCENES
                 or MODERN_ANCHOR_GATE.get(s, {}).get("threshold_met", False)
@@ -1085,6 +1238,12 @@ def create_tasks_balanced(
 
     for scene in viable_scenes:
         quota = scene_quotas[scene]
+        scene_domain_context = scene_domain_contexts.get(scene) or build_domain_context(
+            selected_domain_ids,
+            scene_id=scene,
+        )
+        if selected_domain_ids and not scene_domain_context.get("domain_ids"):
+            continue
         sidecar_gate = MODERN_ANCHOR_GATE.get(scene, {})
         allowed_anchor_words = sidecar_gate.get("allowed_words", set())
         allowed_anchor_sentences = sidecar_gate.get("allowed_sentences", set())
@@ -1184,11 +1343,21 @@ def create_tasks_balanced(
             ] or fallback_examples
         if not anchor_candidates:
             continue
+        if scene_domain_context.get("domain_ids"):
+            anchor_candidates = prioritize_anchor_candidates(
+                anchor_candidates,
+                domain_context=scene_domain_context,
+                rng=rng,
+            )
 
         for _ in range(quota):
             task = None
             for _retry in range(max_retries_per_task):
-                anchor = rng.choice(anchor_candidates)
+                if scene_domain_context.get("domain_ids"):
+                    anchor_pool = anchor_candidates[: min(4, len(anchor_candidates))]
+                    anchor = rng.choice(anchor_pool)
+                else:
+                    anchor = rng.choice(anchor_candidates)
                 exs = related_examples(anchor, scene_examples, limit=4)
                 if not exs:
                     exs = [anchor]
@@ -1215,6 +1384,7 @@ def create_tasks_balanced(
                     scene,
                     rng=rng,
                     forced_core_word=forced_core_word,
+                    domain_context=scene_domain_context,
                 )
                 if core_word is None:
                     continue
@@ -1238,7 +1408,17 @@ def create_tasks_balanced(
                     continue
                 used_task_signatures.add(signature)
                 tid = f"fs_{hashlib.md5(f'{scene}_{len(tasks)}_{seed}'.encode()).hexdigest()[:10]}"
-                task = build_task(exs, core_word, support_words, scene, tid, lane, core_tier, domain_ids or [])
+                task = build_task(
+                    exs,
+                    core_word,
+                    support_words,
+                    scene,
+                    tid,
+                    lane,
+                    core_tier,
+                    list(scene_domain_context.get("domain_ids") or []),
+                    domain_context=scene_domain_context,
+                )
                 if lane == "food_modern_trial":
                     food_trial_done += 1
                     used_trial_core_surfaces.add(core_word_surface)
