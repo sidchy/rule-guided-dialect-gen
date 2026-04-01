@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -10,12 +11,20 @@ from typing import Any
 from generate_controlled_sentences import build_client
 from openai import OpenAI
 
-from build_controlled_generation_assets import ROOT
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from wz_pipeline.dialect import ACTIVE_DIALECT_CONFIG
+from wz_pipeline.grammar_guardrails import grammar_validation_reasons
+from wz_pipeline.grammar_spec import relevant_spec_excerpt, relevant_spec_labels
+from wz_pipeline.paths import DATA_DIR
 
 
-DEFAULT_INPUT = ROOT / "data" / "controlled_generation" / "filtered" / "pilot_v3_qwen" / "generation_candidates_accepted.jsonl"
-DEFAULT_OUTPUT = ROOT / "data" / "controlled_generation" / "filtered" / "pilot_v3_qwen" / "generation_candidates_critic.jsonl"
-DEFAULT_SUMMARY = ROOT / "data" / "controlled_generation" / "filtered" / "pilot_v3_qwen" / "critic_summary.json"
+DEFAULT_INPUT = DATA_DIR / "controlled_generation" / "filtered" / "pilot_v3_qwen" / "generation_candidates_accepted.jsonl"
+DEFAULT_OUTPUT = DATA_DIR / "controlled_generation" / "filtered" / "pilot_v3_qwen" / "generation_candidates_critic.jsonl"
+DEFAULT_SUMMARY = DATA_DIR / "controlled_generation" / "filtered" / "pilot_v3_qwen" / "critic_summary.json"
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -37,15 +46,33 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def build_grammar_payload(row: dict[str, Any]) -> dict[str, Any]:
+    sentence = str(row.get("sentence") or row.get("wz_sentence") or "").strip()
+    validation = row.get("validation") if isinstance(row.get("validation"), dict) else {}
+    reasons = validation.get("grammar_reasons")
+    if not isinstance(reasons, list):
+        reasons = grammar_validation_reasons(sentence)
+    sections = validation.get("grammar_spec_sections")
+    if not isinstance(sections, list):
+        sections = relevant_spec_labels(sentence, reasons)
+    return {
+        "candidate_grammar_reasons": reasons,
+        "candidate_grammar_sections": sections,
+        "grammar_spec_excerpt": relevant_spec_excerpt(sentence, reasons, max_lines=3),
+    }
+
+
 def build_prompt(row: dict[str, Any]) -> tuple[str, str]:
+    grammar_payload = build_grammar_payload(row)
     system = (
-        "你是温州话受控生成质检员。"
+        f"你是{ACTIVE_DIALECT_CONFIG.dialect_name}受控生成质检员。"
         "你只做质量判定，不改写。"
         "重点判断："
-        "1. 句子像不像自然温州话口语；"
+        f"1. 句子像不像自然{ACTIVE_DIALECT_CONFIG.dialect_name}口语；"
         "2. required_words 是否被硬塞；"
         "3. 是否和 scene_id 大体匹配；"
-        "4. 是否适合后续语音训练。"
+        "4. 是否适合后续语音训练；"
+        "5. 功能词、体貌、否定、语序是否符合提供的语法规范。"
         "如果语义明显别扭，即使格式过关，也必须判 fail。"
         "只输出 JSON object。"
     )
@@ -62,6 +89,7 @@ def build_prompt(row: dict[str, Any]) -> tuple[str, str]:
         "slot_values_model": row.get("slot_values_model") or {},
         "eligible_slot_replacement_ratio": row.get("eligible_slot_replacement_ratio"),
         "pool_compliance_ratio": row.get("pool_compliance_ratio"),
+        **grammar_payload,
         "slots": [
             {
                 "slot_id": slot.get("slot_id"),
@@ -76,6 +104,9 @@ def build_prompt(row: dict[str, Any]) -> tuple[str, str]:
             "pass": "boolean",
             "score": "0.0-1.0 float",
             "issue_types": ["semantic_mismatch | forced_insertion | scene_mismatch | unnatural_wz | speech_training_risk"],
+            "grammar_pass": "boolean",
+            "grammar_issue_types": ["particle_misuse | aspect_misuse | negation_misuse | object_order | mandarin_leakage | unsupported_form"],
+            "cited_sections": ["grammar section titles"],
             "note": "short Chinese note under 30 chars",
         },
     }
@@ -110,10 +141,21 @@ def normalize_result(result: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(issue_types, list):
         issue_types = []
     issue_types = [str(item) for item in issue_types][:5]
+    grammar_issue_types = result.get("grammar_issue_types") or []
+    if not isinstance(grammar_issue_types, list):
+        grammar_issue_types = []
+    grammar_issue_types = [str(item) for item in grammar_issue_types][:5]
+    cited_sections = result.get("cited_sections") or []
+    if not isinstance(cited_sections, list):
+        cited_sections = []
+    cited_sections = [str(item) for item in cited_sections if str(item).strip()][:6]
     return {
         "critic_pass": bool(result.get("pass", False)),
         "critic_score": round(score, 4),
         "critic_issue_types": issue_types,
+        "critic_grammar_pass": bool(result.get("grammar_pass", False)),
+        "critic_grammar_issue_types": grammar_issue_types,
+        "critic_cited_sections": cited_sections,
         "critic_note": str(result.get("note") or "").strip()[:30],
     }
 
@@ -123,6 +165,9 @@ def build_error_result(error_message: str) -> dict[str, Any]:
         "critic_pass": False,
         "critic_score": 0.0,
         "critic_issue_types": ["critic_request_failed"],
+        "critic_grammar_pass": False,
+        "critic_grammar_issue_types": ["critic_request_failed"],
+        "critic_cited_sections": [],
         "critic_note": error_message[:30],
         "critic_request_failed": True,
         "critic_request_error": error_message,
@@ -172,6 +217,9 @@ def main() -> None:
                 "critic_fail_rows": sum(1 for item in reviewed_rows if not item["critic_pass"]),
                 "failed_request_rows": failed,
                 "issue_type_counts": dict(Counter(issue for item in reviewed_rows for issue in item["critic_issue_types"])),
+                "grammar_issue_type_counts": dict(
+                    Counter(issue for item in reviewed_rows for issue in item["critic_grammar_issue_types"])
+                ),
                 "provider": provider,
                 "model": model,
                 "output_path": str(args.output),

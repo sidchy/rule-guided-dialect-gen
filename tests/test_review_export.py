@@ -1,3 +1,5 @@
+import wz_pipeline.review as review_module
+
 from wz_pipeline.review import (
     build_grammar_review_metadata,
     exclude_rows_with_terms,
@@ -109,3 +111,15 @@ def test_build_grammar_review_metadata_highlights_particles() -> None:
     assert metadata["grammar_auto_flags"] == "sentence_final_ba_overused"
     assert "3.1 完成体：`爻`" in metadata["grammar_spec_sections"]
     assert "3.4 已然体：重读 `罢` 与句末轻读 `罢`" in metadata["grammar_spec_sections"]
+
+
+def test_build_grammar_review_metadata_respects_empty_review_markers(monkeypatch) -> None:
+    monkeypatch.setattr(review_module, "load_grammar_config", lambda: {"review_markers": []})
+    metadata = review_module.build_grammar_review_metadata(
+        {
+            "wz_sentence": "饭吃爻罢。",
+            "validation": {},
+        }
+    )
+    assert metadata["grammar_markers"] == ""
+    assert metadata["grammar_auto_flags"] == ""

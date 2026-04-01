@@ -4,10 +4,7 @@ import json
 from functools import lru_cache
 from typing import Any
 
-from .paths import CONFIGS_DIR
-
-
-SCENE_POLICY_PATH = CONFIGS_DIR / "scene_policy.json"
+from .paths import SCENE_POLICY_PATH
 
 
 @lru_cache(maxsize=1)

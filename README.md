@@ -386,9 +386,8 @@ promotion_candidates.jsonl — 晋级候选
 └── docs/                     ← 文档
 ```
 
-> **当前状态**：框架代码中仍有温州话特定的硬编码值（详见 `docs/AUDIT_REPORT.md`）。
-> `dialects/wenzhou/dialect.yaml` 已提取了所有硬编码值作为参考。
-> 后续代码重构将让框架代码从 `dialect.yaml` 读取配置，实现真正的方言无关。
+> **当前状态**：框架代码已开始从 `dialects/<dialect>/dialect.yaml` 读取运行时配置，并支持本地方言 overlay 不存在时回退到根目录现有资源。
+> 仍有一部分温州话启发式常量尚未完全移出代码（详见 `docs/AUDIT_REPORT.md`），但生成主链、语法摘录和 review metadata 已接入配置层。
 
 ---
 

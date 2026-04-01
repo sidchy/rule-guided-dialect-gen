@@ -16,3 +16,6 @@ build/
 data/
 runs/
 
+# Keep the open-source repo generic; local Wenzhou instance assets stay untracked.
+dialects/wenzhou/*
+!dialects/wenzhou/dialect.yaml

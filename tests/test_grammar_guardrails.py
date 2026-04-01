@@ -1,4 +1,6 @@
 from wz_pipeline.grammar_guardrails import (
+    build_generation_grammar_prompt_rules,
+    build_generation_grammar_user_rules,
     build_grammar_repair_user_prompt,
     grammar_validation_reasons,
     should_attempt_grammar_repair,
@@ -39,3 +41,10 @@ def test_build_grammar_repair_user_prompt_contains_context() -> None:
     assert "food_dining" in prompt
     assert "西瓜" in prompt
     assert "completion_followed_by_clause:摆" in prompt
+
+
+def test_generation_prompt_rules_include_spec_excerpt_and_extra_note() -> None:
+    system_rules = build_generation_grammar_prompt_rules()
+    user_rules = build_generation_grammar_user_rules()
+    assert "生成总原则" in system_rules
+    assert "高头 / 交关 / 贪头" in user_rules

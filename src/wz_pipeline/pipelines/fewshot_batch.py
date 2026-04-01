@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import random
 import re
 import sys
@@ -34,18 +33,20 @@ LEGACY_SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 if str(LEGACY_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(LEGACY_SCRIPTS_DIR))
 
-from build_controlled_generation_assets import ROOT, SCENE_CATALOG, SEMANTIC_CLASS_HINTS, build_scene_payload
+from build_controlled_generation_assets import SCENE_CATALOG, SEMANTIC_CLASS_HINTS, build_scene_payload
 from generate_controlled_sentences import build_client
 from wz_pipeline.contracts import apply_contract
+from wz_pipeline.dialect import ACTIVE_DIALECT_CONFIG
 from wz_pipeline.grammar_guardrails import (
-    GRAMMAR_PROMPT_RULES,
-    GRAMMAR_REPAIR_SYSTEM_PROMPT,
-    GRAMMAR_USER_RULES,
+    build_generation_grammar_prompt_rules,
+    build_generation_grammar_user_rules,
+    build_grammar_repair_system_prompt,
     build_grammar_repair_user_prompt,
     grammar_validation_reasons,
     should_attempt_grammar_repair,
 )
-from wz_pipeline.grammar_spec import GRAMMAR_SPEC_PATH, relevant_spec_labels
+from wz_pipeline.paths import DATA_DIR, GRAMMAR_SPEC_PATH
+from wz_pipeline.grammar_spec import relevant_spec_labels
 from wz_pipeline.jsonl import read_jsonl, write_jsonl
 from wz_pipeline.registry import register_run
 from wz_pipeline.review import export_review_tsv
@@ -54,151 +55,89 @@ from wz_pipeline.scene_policy import DEFAULT_SCENES, FOCUS_SCENES, MODERN_SIDECA
 from wz_pipeline.source_surface_guardrails import detect_unsupported_surface_terms
 
 # ---- paths ----
-CLEANED_RECORDS = ROOT / "data" / "cleaned" / "cleaned_records_primary.jsonl"
-EXTRACTED_SHORT = ROOT / "data" / "extracted_training_sentences" / "short_8_20.jsonl"
-EXTRACTED_LONG = ROOT / "data" / "extracted_training_sentences" / "long_20_30.jsonl"
-OUT_DIR = ROOT / "data" / "generated_long_sentences" / "fewshot_batch"
-REPLACEABLE_LEXICON = ROOT / "data" / "controlled_generation" / "assets" / "replaceable_lexicon.jsonl"
-DENSE_WHITELIST = ROOT / "data" / "controlled_generation" / "assets" / "dense_slot_lexicon_whitelist.jsonl"
-EXTERNAL_TERM_CATALOG = ROOT / "data" / "controlled_generation" / "assets" / "external_term_catalog.json"
-DENSE_SCENE_SEEDS = ROOT / "data" / "controlled_generation" / "assets" / "dense_scene_seed_terms.json"
-FEWSHOT_CORE_POLICY = ROOT / "data" / "controlled_generation" / "assets" / "fewshot_core_policy.json"
-MODERN_ANCHOR_CANDIDATES = ROOT / "data" / "generated_long_sentences" / "reports" / "modern_anchor_candidates.json"
-MODERN_ANCHOR_EXAMPLES = ROOT / "data" / "generated_long_sentences" / "reports" / "modern_anchor_examples.jsonl"
+CLEANED_RECORDS = DATA_DIR / "cleaned" / "cleaned_records_primary.jsonl"
+EXTRACTED_SHORT = DATA_DIR / "extracted_training_sentences" / "short_8_20.jsonl"
+EXTRACTED_LONG = DATA_DIR / "extracted_training_sentences" / "long_20_30.jsonl"
+OUT_DIR = DATA_DIR / "generated_long_sentences" / "fewshot_batch"
+REPLACEABLE_LEXICON = DATA_DIR / "controlled_generation" / "assets" / "replaceable_lexicon.jsonl"
+DENSE_WHITELIST = DATA_DIR / "controlled_generation" / "assets" / "dense_slot_lexicon_whitelist.jsonl"
+EXTERNAL_TERM_CATALOG = DATA_DIR / "controlled_generation" / "assets" / "external_term_catalog.json"
+DENSE_SCENE_SEEDS = DATA_DIR / "controlled_generation" / "assets" / "dense_scene_seed_terms.json"
+FEWSHOT_CORE_POLICY = DATA_DIR / "controlled_generation" / "assets" / "fewshot_core_policy.json"
+MODERN_ANCHOR_CANDIDATES = DATA_DIR / "generated_long_sentences" / "reports" / "modern_anchor_candidates.json"
+MODERN_ANCHOR_EXAMPLES = DATA_DIR / "generated_long_sentences" / "reports" / "modern_anchor_examples.jsonl"
 PIPELINE_NAME = "fewshot_batch"
 
 PAREN_RE = re.compile(r"[（(][^）)]{1,4}[）)]")
 TOKEN_RE = re.compile(r"[\u4e00-\u9fffA-Za-z0-9]+")
+DIALECT_SETTINGS = ACTIVE_DIALECT_CONFIG.raw
+SENTENCE_LENGTH = DIALECT_SETTINGS.get("sentence_length") or {}
+MIN_SENTENCE_LENGTH = int(SENTENCE_LENGTH.get("min") or 20)
+MAX_SENTENCE_LENGTH = int(SENTENCE_LENGTH.get("max") or 30)
+DIALECT_NAME = ACTIVE_DIALECT_CONFIG.dialect_name
+STANDARD_LANGUAGE_LABEL = ACTIVE_DIALECT_CONFIG.standard_language_label
 
-BAD_DEFINITION_HINTS = (
-    "后置于",
-    "前置于",
-    "用于",
-    "用在",
-    "俗语",
-    "助词",
-    "量词",
-    "副词",
-    "介词",
-    "连词",
-    "语气词",
-    "代词",
-    "作副词",
-    "在动词后",
-)
-NON_DAILY_DEFINITION_HINTS = (
-    "比喻",
-    "借指",
-    "引申",
-    "戏称",
-    "绰号",
-    "一种舞",
-    "一类人",
-)
-ARCHAIC_DEFINITION_HINTS = (
-    "旧俗",
-    "旧时",
-    "旧称",
-    "古代",
-    "古时",
-    "旧式",
-    "老式",
-    "银圆",
-    "酒筵",
-    "传统木结构",
-    "旧社会",
-)
-ARCHAIC_ALLOWED_HINTS = (
-    "今指",
-    "现在也指",
-    "现指",
-)
-ABSTRACT_TIME_HINTS = (
-    "明后天",
-    "明天",
-    "后天",
-    "昨天",
-    "今天",
-    "以前",
-    "以后",
-    "现在",
-    "刚才",
-    "过去",
-    "过些日子",
-)
-STOPWORDS = {
-    "一个",
-    "一种",
-    "一件",
-    "这个",
-    "那个",
-    "这里",
-    "那里",
-    "什么",
-    "事情",
-    "东西",
-    "个",
-    "了",
-    "的",
-    "着",
-    "过",
-    "在",
-    "是",
-    "有",
-    "很",
-    "真",
-}
+BAD_DEFINITION_HINTS = tuple(DIALECT_SETTINGS.get("bad_definition_hints") or (
+    "后置于", "前置于", "用于", "用在", "俗语", "助词", "量词", "副词", "介词", "连词", "语气词", "代词", "作副词", "在动词后",
+))
+NON_DAILY_DEFINITION_HINTS = tuple(DIALECT_SETTINGS.get("non_daily_definition_hints") or (
+    "比喻", "借指", "引申", "戏称", "绰号", "一种舞", "一类人",
+))
+ARCHAIC_DEFINITION_HINTS = tuple(DIALECT_SETTINGS.get("archaic_definition_hints") or (
+    "旧俗", "旧时", "旧称", "古代", "古时", "旧式", "老式", "银圆", "酒筵", "传统木结构", "旧社会",
+))
+ARCHAIC_ALLOWED_HINTS = tuple(DIALECT_SETTINGS.get("archaic_allowed_hints") or ("今指", "现在也指", "现指"))
+ABSTRACT_TIME_HINTS = tuple(DIALECT_SETTINGS.get("abstract_time_hints") or (
+    "明后天", "明天", "后天", "昨天", "今天", "以前", "以后", "现在", "刚才", "过去", "过些日子",
+))
+STOPWORDS = set(DIALECT_SETTINGS.get("stopwords") or (
+    "一个", "一种", "一件", "这个", "那个", "这里", "那里", "什么", "事情", "东西", "个", "了", "的", "着", "过", "在", "是", "有", "很", "真",
+))
 POLICY_VERSION = "track_b_mainline_v3_2026-04-01"
-SHOPPING_OLD_MONEY_TERMS = {"银圆"}
-SHOPPING_PROMPT_BLOCKED_TERMS = {"银圆", "屋宕", "银行", "鸡卵"}
-SHOPPING_AMOUNT_TERMS = {
-    "番钿", "十番钿", "五十番钿", "一百番钿", "两百番钿", "几十番钿", "百来番钿",
-}
-FOOD_SUPPORT_PRIORITY_TERMS = {
-    "米饭",
-    "鸡蛋",
-    "苹果",
-    "葡萄",
-    "西瓜",
-    "杨梅",
-    "牛奶",
-    "面包",
-    "奶茶",
-    "外卖",
-    "鱼丸",
-    "汤圆",
-}
-FOOD_BEVERAGE_TERMS = {"奶茶", "牛奶", "咖啡", "可乐"}
-FOOD_STAPLE_TERMS = {"米饭", "面包", "外卖", "鱼丸", "汤圆", "鸡蛋"}
-FOOD_ACTION_TERMS = {"吃饭", "烧菜", "煮饭", "点单", "打包"}
-HOME_SUPPORT_PRIORITY_TERMS = {
-    "洗衣机", "冰箱", "空调", "热水器", "电饭煲", "微波炉",
-    "路由器", "阳台", "厨房", "书房", "收拾", "整理", "晾起",
-}
-SHOPPING_SUPPORT_PRIORITY_TERMS = {
-    "付款码", "收款码", "支付宝", "二维码", "订单", "快递",
-    "快递柜", "优惠券", "会员码", "超市", "网店", "直播间",
-    "收银台", "客服", "售后", "电商",
-    "番钿", "十番钿", "五十番钿", "一百番钿", "两百番钿", "几十番钿", "百来番钿",
-}
-TRANSPORT_SUPPORT_PRIORITY_TERMS = {
-    "地铁", "高铁", "动车", "轻轨", "网约车", "共享单车",
-    "导航", "车站", "地铁站", "高铁站", "机场", "候车室",
-    "安检口", "行李箱", "车站大道", "五马街", "南塘街",
-}
-WEATHER_SUPPORT_PRIORITY_TERMS = {
-    "雨伞", "雨衣", "口罩", "充电宝", "保温杯", "头盔",
-    "应急包", "应急灯", "地库", "路口", "预警", "预报",
-    "避雨", "保暖", "防滑",
-}
+SCENE_TERMS = DIALECT_SETTINGS.get("scene_terms") or {}
+
+
+def _scene_term_config(scene_id: str) -> dict[str, Any]:
+    payload = SCENE_TERMS.get(scene_id) or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _scene_term_set(scene_id: str, field: str) -> set[str]:
+    values = _scene_term_config(scene_id).get(field)
+    if not isinstance(values, (list, tuple, set)):
+        return set()
+    return {str(value).strip() for value in values if str(value).strip()}
+
+
+def _scene_support_pool_size(scene_id: str, default: int) -> int:
+    value = _scene_term_config(scene_id).get("support_pool_size")
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+SHOPPING_OLD_MONEY_TERMS = _scene_term_set("shopping_payment", "old_money_terms")
+SHOPPING_PROMPT_BLOCKED_TERMS = _scene_term_set("shopping_payment", "prompt_blocked_terms")
+SHOPPING_AMOUNT_TERMS = _scene_term_set("shopping_payment", "amount_terms")
+FOOD_SUPPORT_PRIORITY_TERMS = _scene_term_set("food_dining", "support_priority_terms")
+FOOD_BEVERAGE_TERMS = _scene_term_set("food_dining", "beverage_terms")
+FOOD_STAPLE_TERMS = _scene_term_set("food_dining", "staple_terms")
+FOOD_ACTION_TERMS = _scene_term_set("food_dining", "action_terms")
+HOME_SUPPORT_PRIORITY_TERMS = _scene_term_set("home_life", "support_priority_terms")
+SHOPPING_SUPPORT_PRIORITY_TERMS = _scene_term_set("shopping_payment", "support_priority_terms")
+TRANSPORT_SUPPORT_PRIORITY_TERMS = _scene_term_set("transport_trip", "support_priority_terms")
+WEATHER_SUPPORT_PRIORITY_TERMS = _scene_term_set("weather_safety", "support_priority_terms")
 SCENE_SUPPORT_POOL_SIZES = {
-    "food_dining": 6,
-    "home_life": 5,
-    "shopping_payment": 5,
-    "transport_trip": 5,
-    "weather_safety": 5,
-    "digital_chat": 4,
-    "work_study": 4,
+    "food_dining": _scene_support_pool_size("food_dining", 6),
+    "home_life": _scene_support_pool_size("home_life", 5),
+    "shopping_payment": _scene_support_pool_size("shopping_payment", 5),
+    "transport_trip": _scene_support_pool_size("transport_trip", 5),
+    "weather_safety": _scene_support_pool_size("weather_safety", 5),
+    "digital_chat": _scene_support_pool_size("digital_chat", 4),
+    "work_study": _scene_support_pool_size("work_study", 4),
 }
 
 
@@ -959,15 +898,15 @@ def select_core_and_support_words(
 
 # ===================== TASK BUILDING =====================
 
-SYSTEM_PROMPT = """你是温州话句子生成器。你的任务是根据提供的温州话词典例句和词汇，生成自然的温州话长句。
+SYSTEM_PROMPT = f"""你是{DIALECT_NAME}句子生成器。你的任务是根据提供的{DIALECT_NAME}词典例句和词汇，生成自然的{DIALECT_NAME}长句。
 
 规则：
-1. 每句必须 20-30 个字（含标点）
+1. 每句必须 {MIN_SENTENCE_LENGTH}-{MAX_SENTENCE_LENGTH} 个字（含标点）
 2. 每句必须使用给定的"核心词汇"
 3. 辅助词汇只有在非常自然时才可加入，最多加入 1 个，不要硬塞
-3. 句子要像温州人日常说话的口语，不是书面语
+3. 句子要像当地人日常说话的口语，不是书面语
 4. 保持例句中展示的方言特征，但不要为了像方言而乱拼功能词
-5. 不要写成普通话
+5. 不要写成{STANDARD_LANGUAGE_LABEL}
 6. 每句要有完整的语义，适合语音训练朗读
 7. 生成 5 句，每句独立
 8. 优先围绕核心词展开一个完整、日常的小情境，不要把不相关词硬拼进一句
@@ -976,7 +915,7 @@ SYSTEM_PROMPT = """你是温州话句子生成器。你的任务是根据提供�
 11. 不要混入其他吴语区常见词形；只能跟参考例句、本地词表和给定词汇走，不会说就换成本地更稳的说法
 12. 功能词语法必须比“像不像方言”更优先；拿不准时，宁可少用 `爻 / 罢 / 著埭 / 起 / 落去`
 13. 不要自己发明新的两字到四字词；除给定词和参考例句能支持的说法外，拿不准就改写成来源里已有的稳妥表达
-""" + "\n\n" + GRAMMAR_PROMPT_RULES + "\n\n只输出 JSON：\n" + '{"sentences": [{"wz": "温州话句子", "zh": "普通话翻译"}]}'
+""" + "\n\n" + build_generation_grammar_prompt_rules() + f"\n\n只输出 JSON：\n" + f'{{"sentences": [{{"wz": "{DIALECT_NAME}句子", "zh": "{STANDARD_LANGUAGE_LABEL}翻译"}}]}}'
 
 def build_task(
     examples: list[dict[str, Any]],
@@ -990,7 +929,7 @@ def build_task(
     banned_terms = global_deny_terms() | scene_deny_terms(scene_id) | (SHOPPING_OLD_MONEY_TERMS if scene_id == "shopping_payment" else set())
     prompt_examples, examples_contaminated = prompt_examples_for_task(scene_id, examples, banned_terms)
     example_block = "\n".join(
-        f"  {i+1}. 温州话：{ex['wz_sentence']}\n     普通话：{ex['zh_sentence']}"
+        f"  {i+1}. {DIALECT_NAME}：{ex['wz_sentence']}\n     {STANDARD_LANGUAGE_LABEL}：{ex['zh_sentence']}"
         for i, ex in enumerate(prompt_examples)
     ) or "  - 本任务不展示旧例句，只保留核心词和辅助词，请直接生成自然口语句子。"
     support_block = "\n".join(
@@ -1004,9 +943,10 @@ def build_task(
     shopping_amount_note = ""
     if scene_id == "shopping_payment" and any(str(w.get("wz_word") or "").strip() in SHOPPING_AMOUNT_TERMS for w in support_words):
         shopping_amount_note = "\n如果句子里提到价钱，优先直接用给定的具体金额说法，不要改成泛泛的“钞票”，也不要写“银圆”。"
+    grammar_user_rules = build_generation_grammar_user_rules()
     user_msg = f"""场景：{scene_id}
 
-参考温州话例句（注意学习其中的方言风格和用词习惯）：
+参考{DIALECT_NAME}例句（注意学习其中的方言风格和用词习惯）：
 {example_block}
 
 核心词汇（每句必须使用）：
@@ -1018,12 +958,12 @@ def build_task(
 禁止词汇（即使参考例句出现，也绝对不要写进新句子）：
 {banned_block}{contamination_note}{shopping_amount_note}
 
-请额外遵守这些温州话语法约束：
-{GRAMMAR_USER_RULES}
+请额外遵守这些{DIALECT_NAME}语法约束：
+{grammar_user_rules}
 
 如果一句话里需要额外内容词，优先复用参考例句和本地来源里已经出现过的说法，不要自己新造两字到四字词。
 
-请生成 5 个 20-30 字的温州话口语长句。"""
+请生成 5 个 {MIN_SENTENCE_LENGTH}-{MAX_SENTENCE_LENGTH} 字的{DIALECT_NAME}口语长句。"""
 
     approved_modern_terms = sorted(
         {
@@ -1306,7 +1246,7 @@ def repair_sentence_grammar(client, model, task, wz_sentence: str, zh_sentence: 
         resp = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": GRAMMAR_REPAIR_SYSTEM_PROMPT},
+                {"role": "system", "content": build_grammar_repair_system_prompt()},
                 {
                     "role": "user",
                     "content": build_grammar_repair_user_prompt(
@@ -1337,13 +1277,16 @@ def repair_sentence_grammar(client, model, task, wz_sentence: str, zh_sentence: 
 
 # ===================== VALIDATION =====================
 
-MANDARIN_MARKERS = [
-    "的话", "然后", "但是", "因为", "所以", "而且", "虽然", "如果",
-    "可是", "或者", "不过", "已经", "正在", "刚才",
-    "什么", "怎么", "为什么", "哪里", "这里", "那里",
-    "他们", "她们", "我们", "你们",
-    "非常", "特别", "真的是",
-]
+MANDARIN_MARKERS = list(
+    DIALECT_SETTINGS.get("mandarin_markers")
+    or [
+        "的话", "然后", "但是", "因为", "所以", "而且", "虽然", "如果",
+        "可是", "或者", "不过", "已经", "正在", "刚才",
+        "什么", "怎么", "为什么", "哪里", "这里", "那里",
+        "他们", "她们", "我们", "你们",
+        "非常", "特别", "真的是",
+    ]
+)
 
 
 def validate_sentence(
@@ -1370,9 +1313,9 @@ def validate_sentence(
         protected_terms=[core_word, *support_words, *approved_modern_terms],
     )
 
-    if char_len < 20:
+    if char_len < MIN_SENTENCE_LENGTH:
         reasons.append(f"too_short:{char_len}")
-    elif char_len > 30:
+    elif char_len > MAX_SENTENCE_LENGTH:
         reasons.append(f"too_long:{char_len}")
 
     found_known = sorted({w for w in known_words if w in wz_clean})
@@ -1509,6 +1452,8 @@ def main():
     results_path = layout.results_path
     rule_gate_path = layout.rule_gate_path
     config = {
+        "dialect": ACTIVE_DIALECT_CONFIG.dialect_key,
+        "dialect_name": DIALECT_NAME,
         "tasks": args.tasks,
         "provider": args.provider,
         "model": model,
@@ -1517,6 +1462,7 @@ def main():
         "scenes": [],
         "food_modern_trial_ratio": args.food_modern_trial_ratio,
         "grammar_repair_enabled": not args.disable_grammar_repair,
+        "grammar_spec_path": str(GRAMMAR_SPEC_PATH),
         "policy_version": POLICY_VERSION,
         "compatibility_output_dir": str(args.output_dir) if args.output_dir else "",
     }

@@ -3,44 +3,10 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
-from .paths import DOCS_DIR
+from .grammar_config import load_grammar_config
+from .paths import GRAMMAR_SPEC_PATH
 
 
-GRAMMAR_SPEC_PATH = DOCS_DIR / "温州话生成语法规范_潘悟云原书67-83页.md"
-GENERATION_SECTION_TITLES = [
-    "## 2. 生成总原则",
-    "### 3.1 完成体：`爻`",
-    "### 3.2 进行体：`著埭 + V`",
-    "### 3.3 持续体：`V + 著埭`",
-    "### 3.4 已然体：重读 `罢` 与句末轻读 `罢`",
-    "### 3.5 起始体：`起`",
-    "### 3.6 继续体：`落去`",
-    "### 9.1 `不`",
-    "### 9.2 `未`",
-    "### 9.3 `冇` 的否定用法",
-]
-MARKER_SECTION_TITLES = {
-    "爻": ["### 3.1 完成体：`爻`"],
-    "罢": ["### 3.4 已然体：重读 `罢` 与句末轻读 `罢`"],
-    "著埭": ["### 3.2 进行体：`著埭 + V`", "### 3.3 持续体：`V + 著埭`"],
-    "起": ["### 3.5 起始体：`起`"],
-    "落去": ["### 3.6 继续体：`落去`"],
-    "不": ["### 9.1 `不`"],
-    "未": ["### 9.2 `未`"],
-    "冇": ["### 9.3 `冇` 的否定用法"],
-}
-REASON_SECTION_TITLES = {
-    "completion_object_order": ["### 3.1 完成体：`爻`"],
-    "completion_after_modal": ["### 3.1 完成体：`爻`"],
-    "completion_marker_overused": ["### 3.1 完成体：`爻`"],
-    "completion_followed_by_clause": ["### 3.1 完成体：`爻`"],
-    "sentence_final_ba_overused": ["### 3.4 已然体：重读 `罢` 与句末轻读 `罢`"],
-    "stative_progressive": ["### 3.2 进行体：`著埭 + V`"],
-    "dynamic_postposed_zhedai": ["### 3.3 持续体：`V + 著埭`"],
-    "qishi_object_order": ["### 3.5 起始体：`起`"],
-    "continuative_object_order": ["### 3.6 继续体：`落去`"],
-    "mandarin_negation": ["### 9.1 `不`", "### 9.2 `未`", "### 9.3 `冇` 的否定用法"],
-}
 HEADING_RE = re.compile(r"^(#{2,3})\s+(.+?)\s*$")
 
 
@@ -55,6 +21,8 @@ def _display_title(title: str) -> str:
 
 @lru_cache(maxsize=1)
 def load_grammar_spec_sections() -> dict[str, str]:
+    if not GRAMMAR_SPEC_PATH.exists():
+        return {}
     text = GRAMMAR_SPEC_PATH.read_text(encoding="utf-8")
     sections: dict[str, str] = {}
     current_title = ""
@@ -83,11 +51,15 @@ def compact_spec_section(title: str, *, max_lines: int = 4) -> str:
 
 
 def generation_spec_excerpt(*, max_lines: int = 3) -> str:
-    return "\n\n".join(compact_spec_section(title, max_lines=max_lines) for title in GENERATION_SECTION_TITLES)
+    titles = load_grammar_config().get("generation_section_titles") or []
+    return "\n\n".join(compact_spec_section(title, max_lines=max_lines) for title in titles)
 
 
 def relevant_spec_titles(text: str, reasons: list[str] | None = None) -> list[str]:
     sentence = str(text or "")
+    grammar_config = load_grammar_config()
+    marker_to_sections = grammar_config.get("marker_to_sections") or {}
+    reason_to_sections = grammar_config.get("reason_to_sections") or {}
     ordered: list[str] = []
     seen: set[str] = set()
 
@@ -97,13 +69,13 @@ def relevant_spec_titles(text: str, reasons: list[str] | None = None) -> list[st
             ordered.append(title)
 
     add("## 2. 生成总原则")
-    for marker, titles in MARKER_SECTION_TITLES.items():
+    for marker, titles in marker_to_sections.items():
         if marker in sentence:
             for title in titles:
                 add(title)
     for reason in reasons or []:
         reason_key = str(reason).split(":", 1)[0]
-        for title in REASON_SECTION_TITLES.get(reason_key, []):
+        for title in reason_to_sections.get(reason_key, []):
             add(title)
     return ordered
 

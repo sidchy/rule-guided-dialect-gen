@@ -8,10 +8,10 @@ from typing import Any
 
 from wz_pipeline.contracts import apply_contract
 from wz_pipeline.jsonl import read_jsonl, write_jsonl
+from wz_pipeline.paths import CURATED_DIR, DATA_DIR
 from wz_pipeline.registry import register_run
 from wz_pipeline.review import export_review_tsv
 from wz_pipeline.runs import build_summary, make_run_id, prepare_run_layout, write_json
-from wz_pipeline.paths import ROOT
 from wz_pipeline.scene_policy import MODERN_SIDECAR_SCENES
 from wz_pipeline.pipelines.fewshot_batch import (
     CORE_POLICY,
@@ -30,11 +30,11 @@ from wz_pipeline.pipelines.fewshot_batch import (
 
 PIPELINE_NAME = "modern_anchor_candidates"
 POLICY_VERSION = "sidecar_anchor_v1_2026-04-01"
-REPORT_DIR = ROOT / "data" / "generated_long_sentences" / "reports"
+REPORT_DIR = DATA_DIR / "generated_long_sentences" / "reports"
 OUTPUT_JSON = REPORT_DIR / "modern_anchor_candidates.json"
 OUTPUT_MD = REPORT_DIR / "modern_anchor_candidates.md"
 OUTPUT_JSONL = REPORT_DIR / "modern_anchor_examples.jsonl"
-CURATED_GENERATED = ROOT / "curated" / "generated_reviewed.jsonl"
+CURATED_GENERATED = CURATED_DIR / "generated_reviewed.jsonl"
 MIN_ANCHOR_THRESHOLD = 8
 STRONG_CURATED_CUES = {
     "digital_chat": {"手机", "电话", "微信", "视频", "链接", "群里", "信号", "充电", "截图", "网络", "照片"},

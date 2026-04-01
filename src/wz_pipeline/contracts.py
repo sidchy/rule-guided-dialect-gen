@@ -2,13 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 from typing import Any
 
-from .paths import CONFIGS_DIR
-
-
-TRUST_POLICY_PATH = CONFIGS_DIR / "trust_policy.json"
+from .paths import TRUST_POLICY_PATH
 
 SOURCE_TYPES = {"raw_source", "extracted_seed", "generated_candidate", "reviewed_curated"}
 RULE_GATE_STATUS = {"pass", "fail", "not_run"}
@@ -135,4 +131,3 @@ def contract_fields() -> list[str]:
         "trust_tier",
         "upstream_eligible",
     ]
-

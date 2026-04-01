@@ -7,27 +7,35 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .paths import ROOT
+from .dialect import ACTIVE_DIALECT_CONFIG
+from .paths import DATA_DIR
 
 
-CLEANED_RECORDS = ROOT / "data" / "cleaned" / "cleaned_records_primary.jsonl"
-EXTRACTED_SHORT = ROOT / "data" / "extracted_training_sentences" / "short_8_20.jsonl"
-EXTRACTED_LONG = ROOT / "data" / "extracted_training_sentences" / "long_20_30.jsonl"
-REPLACEABLE_LEXICON = ROOT / "data" / "controlled_generation" / "assets" / "replaceable_lexicon.jsonl"
-DENSE_WHITELIST = ROOT / "data" / "controlled_generation" / "assets" / "dense_slot_lexicon_whitelist.jsonl"
+BOUNDARY_SINGLE_CHARS = set(
+    str(
+        ACTIVE_DIALECT_CONFIG.raw.get("boundary_single_chars")
+        or "我你妳尔侬卬伊渠其阿个着了罢啊呢嘛就再还也都把将给在向从跟和同是有未冇不莫会能真显很较更来去起落"
+    )
+)
 
-SOURCE_PATHS = [
-    CLEANED_RECORDS,
-    EXTRACTED_SHORT,
-    EXTRACTED_LONG,
-    REPLACEABLE_LEXICON,
-    DENSE_WHITELIST,
+DEFAULT_SOURCE_PATHS = [
+    DATA_DIR / "cleaned" / "cleaned_records_primary.jsonl",
+    DATA_DIR / "extracted_training_sentences" / "short_8_20.jsonl",
+    DATA_DIR / "extracted_training_sentences" / "long_20_30.jsonl",
+    DATA_DIR / "controlled_generation" / "assets" / "replaceable_lexicon.jsonl",
+    DATA_DIR / "controlled_generation" / "assets" / "dense_slot_lexicon_whitelist.jsonl",
 ]
+
+source_path_values = ACTIVE_DIALECT_CONFIG.raw.get("source_data_paths") or []
+SOURCE_PATHS = (
+    [ACTIVE_DIALECT_CONFIG.resolve_overlay_path(value) for value in source_path_values]
+    if source_path_values
+    else DEFAULT_SOURCE_PATHS
+)
 
 PAREN_RE = re.compile(r"[（(][^）)]{1,4}[）)]")
 CJK_RUN_RE = re.compile(r"[\u4e00-\u9fffA-Za-z0-9]+")
 MIN_TRUSTED_NGRAM_COUNT = 2
-BOUNDARY_SINGLE_CHARS = set("我你妳尔侬卬伊渠其阿个着了罢啊呢嘛就再还也都把将给在向从跟和同是有未冇不莫会能真显很较更来去起落")
 
 
 def clean_surface(text: str) -> str:

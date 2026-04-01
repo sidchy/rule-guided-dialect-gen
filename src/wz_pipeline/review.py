@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import apply_contract, normalize_support_words, stable_sample_id
+from .grammar_config import load_grammar_config
 from .grammar_spec import relevant_spec_labels
 from .jsonl import write_jsonl
 
@@ -96,7 +97,14 @@ def build_grammar_review_metadata(row: dict[str, Any]) -> dict[str, str]:
     sentence = str(row.get("wz_sentence", "")).strip()
     validation = row.get("validation") if isinstance(row.get("validation"), dict) else {}
     grammar_reasons = validation.get("grammar_reasons", [])
-    markers = [marker for marker in GRAMMAR_REVIEW_MARKERS if marker in sentence]
+    review_markers = load_grammar_config().get("review_markers")
+    if review_markers is None:
+        review_markers = GRAMMAR_REVIEW_MARKERS
+    markers = [
+        marker
+        for marker in review_markers
+        if str(marker) and str(marker) in sentence
+    ]
     sections = relevant_spec_labels(sentence, list(grammar_reasons))
     if markers and not grammar_reasons:
         grammar_reasons = ["manual_particle_review"]

@@ -10,14 +10,14 @@ from pathlib import Path
 
 from wz_pipeline.contracts import apply_contract
 from wz_pipeline.jsonl import write_jsonl
+from wz_pipeline.paths import DATA_DIR
 from wz_pipeline.registry import register_run
 from wz_pipeline.review import export_review_tsv
 from wz_pipeline.runs import build_summary, make_run_id, prepare_run_layout, write_json
-from wz_pipeline.paths import ROOT
 
 
-INPUT = ROOT / "data" / "cleaned" / "cleaned_records_primary.jsonl"
-MIRROR_DIR = ROOT / "data" / "extracted_training_sentences"
+INPUT = DATA_DIR / "cleaned" / "cleaned_records_primary.jsonl"
+MIRROR_DIR = DATA_DIR / "extracted_training_sentences"
 POLICY_VERSION = "source_seed_v1_2026-04-01"
 PIPELINE_NAME = "extract_training_sentences"
 
@@ -185,4 +185,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
