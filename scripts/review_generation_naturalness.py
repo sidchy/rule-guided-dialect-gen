@@ -17,6 +17,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from wz_pipeline.dialect import ACTIVE_DIALECT_CONFIG
+from wz_pipeline.failure_taxonomy import classify_critic_fail_buckets
 from wz_pipeline.grammar_guardrails import grammar_validation_reasons
 from wz_pipeline.grammar_spec import relevant_spec_excerpt, relevant_spec_labels
 from wz_pipeline.paths import DATA_DIR
@@ -173,14 +174,27 @@ def normalize_result(result: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(cited_sections, list):
         cited_sections = []
     cited_sections = [str(item) for item in cited_sections if str(item).strip()][:6]
+    critic_pass = bool(result.get("pass", False))
+    critic_grammar_pass = bool(result.get("grammar_pass", False))
+    critic_domain_pass = bool(result.get("domain_pass", False))
+    critic_fail_buckets = classify_critic_fail_buckets(
+        critic_pass=critic_pass,
+        critic_issue_types=issue_types,
+        critic_grammar_pass=critic_grammar_pass,
+        critic_grammar_issue_types=grammar_issue_types,
+        critic_domain_pass=critic_domain_pass,
+        critic_domain_issue_types=domain_issue_types,
+    )
     return {
-        "critic_pass": bool(result.get("pass", False)),
+        "critic_pass": critic_pass,
         "critic_score": round(score, 4),
         "critic_issue_types": issue_types,
-        "critic_grammar_pass": bool(result.get("grammar_pass", False)),
+        "critic_grammar_pass": critic_grammar_pass,
         "critic_grammar_issue_types": grammar_issue_types,
-        "critic_domain_pass": bool(result.get("domain_pass", False)),
+        "critic_domain_pass": critic_domain_pass,
         "critic_domain_issue_types": domain_issue_types,
+        "critic_fail_buckets": critic_fail_buckets,
+        "critic_primary_fail_bucket": critic_fail_buckets[0] if critic_fail_buckets else "",
         "critic_cited_sections": cited_sections,
         "critic_note": str(result.get("note") or "").strip()[:30],
     }
@@ -195,10 +209,58 @@ def build_error_result(error_message: str) -> dict[str, Any]:
         "critic_grammar_issue_types": ["critic_request_failed"],
         "critic_domain_pass": False,
         "critic_domain_issue_types": ["critic_request_failed"],
+        "critic_fail_buckets": [],
+        "critic_primary_fail_bucket": "",
         "critic_cited_sections": [],
         "critic_note": error_message[:30],
         "critic_request_failed": True,
         "critic_request_error": error_message,
+    }
+
+
+def build_summary_payload(
+    reviewed_rows: list[dict[str, Any]],
+    *,
+    input_rows: int,
+    failed_request_rows: int,
+    provider: str,
+    model: str,
+    output_path: Path,
+) -> dict[str, Any]:
+    critic_fail_rows = [
+        item
+        for item in reviewed_rows
+        if not item["critic_pass"] and not item.get("critic_request_failed")
+    ]
+    return {
+        "input_rows": input_rows,
+        "reviewed_rows": len(reviewed_rows),
+        "critic_pass_rows": sum(1 for item in reviewed_rows if item["critic_pass"]),
+        "critic_fail_rows": sum(1 for item in reviewed_rows if not item["critic_pass"]),
+        "failed_request_rows": failed_request_rows,
+        "issue_type_counts": dict(Counter(issue for item in reviewed_rows for issue in item["critic_issue_types"])),
+        "naturalness_issue_type_counts": dict(
+            Counter(issue for item in reviewed_rows for issue in item["critic_issue_types"])
+        ),
+        "grammar_issue_type_counts": dict(
+            Counter(issue for item in reviewed_rows for issue in item["critic_grammar_issue_types"])
+        ),
+        "domain_issue_type_counts": dict(
+            Counter(issue for item in reviewed_rows for issue in item["critic_domain_issue_types"])
+        ),
+        "critic_fail_bucket_counts": dict(
+            Counter(bucket for item in critic_fail_rows for bucket in item.get("critic_fail_buckets", []))
+        ),
+        "critic_primary_fail_bucket_counts": dict(
+            Counter(
+                item.get("critic_primary_fail_bucket")
+                for item in critic_fail_rows
+                if str(item.get("critic_primary_fail_bucket") or "").strip()
+            )
+        ),
+        "provider": provider,
+        "model": model,
+        "output_path": str(output_path),
     }
 
 
@@ -238,23 +300,14 @@ def main() -> None:
         write_jsonl(args.output, reviewed_rows)
         write_json(
             args.summary,
-            {
-                "input_rows": len(rows),
-                "reviewed_rows": len(reviewed_rows),
-                "critic_pass_rows": sum(1 for item in reviewed_rows if item["critic_pass"]),
-                "critic_fail_rows": sum(1 for item in reviewed_rows if not item["critic_pass"]),
-                "failed_request_rows": failed,
-                "issue_type_counts": dict(Counter(issue for item in reviewed_rows for issue in item["critic_issue_types"])),
-                "grammar_issue_type_counts": dict(
-                    Counter(issue for item in reviewed_rows for issue in item["critic_grammar_issue_types"])
-                ),
-                "domain_issue_type_counts": dict(
-                    Counter(issue for item in reviewed_rows for issue in item["critic_domain_issue_types"])
-                ),
-                "provider": provider,
-                "model": model,
-                "output_path": str(args.output),
-            },
+            build_summary_payload(
+                reviewed_rows,
+                input_rows=len(rows),
+                failed_request_rows=failed,
+                provider=provider,
+                model=model,
+                output_path=args.output,
+            ),
         )
 
     print(f"Input rows: {len(rows)}")

@@ -38,6 +38,7 @@ from generate_controlled_sentences import build_client
 from wz_pipeline.contracts import apply_contract
 from wz_pipeline.dialect import ACTIVE_DIALECT_CONFIG
 from wz_pipeline.domain_config import build_domain_context, normalize_domain_ids
+from wz_pipeline.failure_taxonomy import classify_rule_fail_buckets, classify_rule_reason_bucket, reason_key
 from wz_pipeline.grammar_guardrails import (
     build_generation_grammar_prompt_rules,
     build_generation_grammar_user_rules,
@@ -1894,17 +1895,26 @@ def main():
     banned_term_fail_counts = Counter()
     grammar_fail_counts = Counter()
     domain_fail_counts = Counter()
+    naturalness_fail_counts = Counter()
+    rule_fail_bucket_counts = Counter()
     for row in all_rule_results:
         for reason in row["validation"].get("grammar_reasons", []):
             grammar_fail_counts[reason] += 1
         if row.get("rule_gate_status") == "pass":
             pass
         else:
+            validation_reasons = row["validation"].get("reasons", [])
+            for bucket in classify_rule_fail_buckets(validation_reasons):
+                rule_fail_bucket_counts[bucket] += 1
             for term in row["validation"].get("banned_term_hits", []):
                 banned_term_fail_counts[term] += 1
-            for reason in row["validation"].get("reasons", []):
-                if str(reason).startswith("domain_"):
-                    domain_fail_counts[str(reason).split(":", 1)[0]] += 1
+            for reason in validation_reasons:
+                bucket = classify_rule_reason_bucket(reason)
+                key = reason_key(reason)
+                if bucket == "domain":
+                    domain_fail_counts[key] += 1
+                elif bucket == "naturalness":
+                    naturalness_fail_counts[key] += 1
     trial_core_pass_counts = Counter(
         r.get("core_word", "")
         for r in passed
@@ -1930,6 +1940,8 @@ def main():
             "banned_term_fail_counts": dict(banned_term_fail_counts),
             "grammar_fail_counts": dict(grammar_fail_counts),
             "domain_fail_counts": dict(domain_fail_counts),
+            "naturalness_fail_counts": dict(naturalness_fail_counts),
+            "rule_fail_bucket_counts": dict(rule_fail_bucket_counts),
             "trial_core_pass_counts": dict(trial_core_pass_counts),
             "policy_version": POLICY_VERSION,
             "provider": args.provider,
@@ -1987,6 +1999,8 @@ def main():
             "core_tier_pass_counts": dict(core_tier_pass_counts),
             "banned_term_fail_counts": dict(banned_term_fail_counts),
             "domain_fail_counts": dict(domain_fail_counts),
+            "naturalness_fail_counts": dict(naturalness_fail_counts),
+            "rule_fail_bucket_counts": dict(rule_fail_bucket_counts),
             "trial_core_pass_counts": dict(trial_core_pass_counts),
             "policy_version": POLICY_VERSION,
             "provider": args.provider,
