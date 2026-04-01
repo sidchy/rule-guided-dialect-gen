@@ -116,8 +116,6 @@ def build_failure_analysis(extra: dict[str, Any] | None = None) -> dict[str, Any
     primary_bucket = ""
     for item in _top_counts(bucket_counts, limit=1, preferred_order=FAILURE_BUCKET_ORDER):
         primary_bucket = str(item["name"])
-    if not rule_fail_count and not bucket_counts:
-        return {}
     return {
         "rule_fail_count": rule_fail_count,
         "bucket_counts": bucket_counts,
@@ -147,8 +145,7 @@ def build_summary(
         "rule_pass_rate": round(rule_pass_count / max(1, raw_count), 4),
     }
     failure_analysis = build_failure_analysis(extra)
-    if failure_analysis:
-        machine_metrics["failure_analysis"] = failure_analysis
+    machine_metrics["failure_analysis"] = failure_analysis
     return {
         "pipeline_name": pipeline_name,
         "run_id": run_id,

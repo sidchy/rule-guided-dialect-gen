@@ -1,8 +1,10 @@
 import json
+import sys
 import tempfile
 from pathlib import Path
 
 import wz_pipeline.task_feedback as feedback_module
+from wz_pipeline.pipelines import fewshot_batch as batch_module
 
 
 def test_resolve_feedback_summary_path_uses_run_id_when_no_path() -> None:
@@ -86,3 +88,28 @@ def test_load_feedback_summary_reads_json_object() -> None:
 
     assert payload["run_id"] == "run_demo"
     assert payload["_feedback_summary_path"] == str(summary_path)
+
+
+def test_fewshot_batch_exits_cleanly_when_feedback_summary_missing() -> None:
+    original_build_client = batch_module.build_client
+    original_argv = sys.argv
+    try:
+        batch_module.build_client = lambda provider: (object(), "fake-model", provider)
+        sys.argv = [
+            "wz-generate-fewshot-batch",
+            "--tasks",
+            "1",
+            "--provider",
+            "deepseek",
+            "--feedback-summary",
+            "/tmp/definitely-missing-summary.json",
+        ]
+        try:
+            batch_module.main()
+        except SystemExit as exc:
+            assert "Feedback summary not found" in str(exc)
+        else:
+            raise AssertionError("Expected SystemExit for missing feedback summary")
+    finally:
+        batch_module.build_client = original_build_client
+        sys.argv = original_argv

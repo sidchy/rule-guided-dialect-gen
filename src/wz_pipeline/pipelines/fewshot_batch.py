@@ -1766,11 +1766,14 @@ def main():
     words_by_scene = load_words_by_scene()
     selected_scenes = normalize_scene_list(args.scenes)
     selected_domains = normalize_domain_ids(args.domains)
-    feedback_summary = load_feedback_summary(
-        feedback_summary_path=args.feedback_summary,
-        feedback_run_id=args.feedback_run_id,
-        pipeline_name=PIPELINE_NAME,
-    )
+    try:
+        feedback_summary = load_feedback_summary(
+            feedback_summary_path=args.feedback_summary,
+            feedback_run_id=args.feedback_run_id,
+            pipeline_name=PIPELINE_NAME,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise SystemExit(str(exc))
     feedback_plan = build_feedback_plan(
         feedback_summary,
         scenes=selected_scenes or DEFAULT_SCENES,

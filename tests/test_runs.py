@@ -39,3 +39,22 @@ def test_build_summary_embeds_failure_analysis_into_machine_metrics() -> None:
         "grammar": 2,
         "domain": 1,
     }
+
+
+def test_build_summary_keeps_failure_analysis_when_no_failures() -> None:
+    summary = build_summary(
+        pipeline_name="fewshot_batch",
+        run_id="run_demo",
+        config={},
+        raw_count=3,
+        rule_pass_count=3,
+        extra={},
+    )
+    assert summary["machine_metrics"]["failure_analysis"] == {
+        "rule_fail_count": 0,
+        "bucket_counts": {},
+        "primary_bucket": "",
+        "top_grammar_reasons": [],
+        "top_domain_reasons": [],
+        "top_naturalness_reasons": [],
+    }

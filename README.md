@@ -177,6 +177,9 @@ dialects/你的方言/
 - 不该混入的词
 - 给生成和审核的备注
 
+运行时如果带 `--feedback-run-id` 或 `--feedback-summary`，上一轮 `summary.json` 里的失败分析会继续影响这一轮的配额和采样。
+如果指定的 summary 找不到，pipeline 会直接报错退出，不会静默回退。
+
 ### 入口 5: `grammar/grammar_spec.md` — 语法参考文档
 
 放你的方言语法参考。可以是语法书的摘录、论文的整理、或者你自己写的规范。
@@ -265,6 +268,11 @@ wz-extract-training-sentences
 ```bash
 wz-generate-fewshot-batch --tasks 200 --provider deepseek
 ```
+
+这一阶段固定会写出：
+- `config.json`：包含 `domains` 和 `feedback`
+- `summary.json`：包含 `machine_metrics.failure_analysis`
+- `review.tsv`：包含 `failure_buckets`、`failure_primary_bucket`、`review_focus`
 
 **做了什么**：
 - 按场景均衡分配生成任务
