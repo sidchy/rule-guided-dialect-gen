@@ -55,6 +55,7 @@ from wz_pipeline.review import export_review_tsv
 from wz_pipeline.runs import build_summary, make_run_id, prepare_run_layout, write_json
 from wz_pipeline.scene_policy import DEFAULT_SCENES, FOCUS_SCENES, MODERN_SIDECAR_SCENES, PRIORITY_SCENES
 from wz_pipeline.source_surface_guardrails import detect_unsupported_surface_terms
+from wz_pipeline.task_feedback import build_feedback_plan, load_feedback_summary
 
 # ---- paths ----
 CLEANED_RECORDS = DATA_DIR / "cleaned" / "cleaned_records_primary.jsonl"
@@ -870,6 +871,39 @@ def prioritize_anchor_candidates(
     return [example for _, example in scored]
 
 
+def allocate_scene_quotas(
+    viable_scenes: list[str],
+    num_tasks: int,
+    *,
+    rng: random.Random,
+    scene_weights: dict[str, float] | None = None,
+) -> dict[str, int]:
+    if not viable_scenes or num_tasks <= 0:
+        return {}
+    ordered_scenes = list(viable_scenes)
+    rng.shuffle(ordered_scenes)
+    normalized_weights: dict[str, float] = {}
+    for scene in ordered_scenes:
+        raw_weight = (scene_weights or {}).get(scene, 1.0)
+        try:
+            weight = float(raw_weight)
+        except (TypeError, ValueError):
+            weight = 1.0
+        normalized_weights[scene] = max(weight, 0.0)
+    if not any(weight > 0 for weight in normalized_weights.values()):
+        normalized_weights = {scene: 1.0 for scene in ordered_scenes}
+    total_weight = sum(normalized_weights.values())
+    current_weights = {scene: 0.0 for scene in ordered_scenes}
+    quotas: dict[str, int] = defaultdict(int)
+    for _ in range(num_tasks):
+        for scene in ordered_scenes:
+            current_weights[scene] += normalized_weights[scene]
+        chosen_scene = max(ordered_scenes, key=lambda scene: current_weights[scene])
+        quotas[chosen_scene] += 1
+        current_weights[chosen_scene] -= total_weight
+    return quotas
+
+
 def select_core_and_support_words(
     anchor: dict[str, Any],
     scene_words: list[dict[str, Any]],
@@ -1183,12 +1217,17 @@ def create_tasks_balanced(
     scene_filter: list[str] | None = None,
     food_modern_trial_ratio: float = 0.25,
     domain_ids: list[str] | None = None,
+    feedback_plan: dict[str, Any] | None = None,
 ) -> list[dict]:
     """Create tasks with scene balance, anchor examples, and core-word-driven prompts."""
     rng = random.Random(seed)
     tasks = []
     used_task_signatures: set[tuple[str, str, frozenset[str]]] = set()
     selected_domain_ids = normalize_domain_ids(domain_ids)
+    feedback = feedback_plan or {}
+    feedback_scene_weights = feedback.get("scene_weights") if isinstance(feedback.get("scene_weights"), dict) else {}
+    feedback_anchor_top_k = int(feedback.get("anchor_pool_top_k") or 0)
+    feedback_domain_anchor_top_k = int(feedback.get("domain_anchor_pool_top_k") or 0)
     scene_domain_contexts = {
         scene_id: build_domain_context(selected_domain_ids, scene_id=scene_id)
         for scene_id in PRIORITY_SCENES
@@ -1230,10 +1269,12 @@ def create_tasks_balanced(
         return []
 
     # Allocate tasks per scene (round-robin with priority)
-    scene_quotas: dict[str, int] = defaultdict(int)
-    for i in range(num_tasks):
-        scene = viable_scenes[i % len(viable_scenes)]
-        scene_quotas[scene] += 1
+    scene_quotas = allocate_scene_quotas(
+        viable_scenes,
+        num_tasks,
+        rng=rng,
+        scene_weights=feedback_scene_weights,
+    )
 
     max_retries_per_task = 20
 
@@ -1344,7 +1385,8 @@ def create_tasks_balanced(
             ] or fallback_examples
         if not anchor_candidates:
             continue
-        if scene_domain_context.get("domain_ids"):
+        should_rank_anchors = bool(scene_domain_context.get("domain_ids")) or feedback_anchor_top_k > 0
+        if should_rank_anchors:
             anchor_candidates = prioritize_anchor_candidates(
                 anchor_candidates,
                 domain_context=scene_domain_context,
@@ -1354,8 +1396,13 @@ def create_tasks_balanced(
         for _ in range(quota):
             task = None
             for _retry in range(max_retries_per_task):
+                anchor_top_k = 0
                 if scene_domain_context.get("domain_ids"):
-                    anchor_pool = anchor_candidates[: min(4, len(anchor_candidates))]
+                    anchor_top_k = feedback_domain_anchor_top_k or 4
+                elif feedback_anchor_top_k > 0:
+                    anchor_top_k = feedback_anchor_top_k
+                if anchor_top_k > 0:
+                    anchor_pool = anchor_candidates[: min(anchor_top_k, len(anchor_candidates))]
                     anchor = rng.choice(anchor_pool)
                 else:
                     anchor = rng.choice(anchor_candidates)
@@ -1667,6 +1714,18 @@ def main():
         default="",
         help="Comma-separated domain ids from configs/domain_catalog.json to inject into generation and review.",
     )
+    parser.add_argument(
+        "--feedback-run-id",
+        type=str,
+        default="",
+        help="Optional prior run_id whose summary.json should steer scene quotas and anchor sampling.",
+    )
+    parser.add_argument(
+        "--feedback-summary",
+        type=Path,
+        default=None,
+        help="Optional summary.json path from a previous run to use for quota and sampling feedback.",
+    )
     args = parser.parse_args()
 
     if args.resume and not args.run_id:
@@ -1707,12 +1766,47 @@ def main():
     words_by_scene = load_words_by_scene()
     selected_scenes = normalize_scene_list(args.scenes)
     selected_domains = normalize_domain_ids(args.domains)
+    feedback_summary = load_feedback_summary(
+        feedback_summary_path=args.feedback_summary,
+        feedback_run_id=args.feedback_run_id,
+        pipeline_name=PIPELINE_NAME,
+    )
+    feedback_plan = build_feedback_plan(
+        feedback_summary,
+        scenes=selected_scenes or DEFAULT_SCENES,
+        domain_ids=selected_domains,
+        default_food_modern_trial_ratio=args.food_modern_trial_ratio,
+    )
+    effective_food_modern_trial_ratio = float(
+        feedback_plan.get("food_modern_trial_ratio", args.food_modern_trial_ratio)
+    )
     config["scenes"] = selected_scenes or DEFAULT_SCENES
     config["domains"] = selected_domains
+    config["food_modern_trial_ratio"] = effective_food_modern_trial_ratio
+    config["feedback"] = {
+        "enabled": bool(feedback_plan.get("enabled")),
+        "source_run_id": str(feedback_plan.get("source_run_id") or ""),
+        "source_summary_path": str(feedback_plan.get("source_summary_path") or ""),
+        "primary_bucket": str(feedback_plan.get("primary_bucket") or ""),
+        "bucket_counts": dict(feedback_plan.get("bucket_counts") or {}),
+        "scene_weights": dict(feedback_plan.get("scene_weights") or {}),
+        "anchor_pool_top_k": int(feedback_plan.get("anchor_pool_top_k") or 0),
+        "domain_anchor_pool_top_k": int(feedback_plan.get("domain_anchor_pool_top_k") or 0),
+        "notes": list(feedback_plan.get("notes") or []),
+    }
 
     print(f"Known WZ words (2-4 chars): {len(known_words)}")
     print(f"Selected scenes: {selected_scenes or DEFAULT_SCENES}")
     print(f"Selected domains: {selected_domains or ['<none>']}")
+    if feedback_plan.get("enabled"):
+        print(
+            "Feedback plan: "
+            f"bucket={feedback_plan.get('primary_bucket') or '<none>'}, "
+            f"source_run_id={feedback_plan.get('source_run_id') or '<unknown>'}, "
+            f"anchor_top_k={feedback_plan.get('anchor_pool_top_k') or 0}, "
+            f"food_trial_ratio={effective_food_modern_trial_ratio}"
+        )
+        print(f"Feedback scene weights: {feedback_plan.get('scene_weights') or {}}")
 
     # Load existing sentences for dedup
     existing = set()
@@ -1738,8 +1832,9 @@ def main():
         args.tasks,
         args.seed,
         scene_filter=selected_scenes,
-        food_modern_trial_ratio=args.food_modern_trial_ratio,
+        food_modern_trial_ratio=effective_food_modern_trial_ratio,
         domain_ids=selected_domains,
+        feedback_plan=feedback_plan,
     )
 
     # Filter out already-done tasks

@@ -81,6 +81,9 @@ wz-extract-training-sentences
 # Step 2: 批量生成
 wz-generate-fewshot-batch --tasks 20 --provider deepseek
 
+# 如果想让上一轮失败分析反哺这一轮配额和采样
+wz-generate-fewshot-batch --tasks 20 --provider deepseek --feedback-run-id <上一次的 run_id>
+
 # Step 3: 导出审核包
 wz-export-review-package --run-id <上一步输出的 run_id>
 ```

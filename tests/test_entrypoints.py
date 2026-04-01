@@ -22,6 +22,7 @@ def test_review_generation_naturalness_help_runs_from_checkout() -> None:
 def test_fewshot_batch_source_mentions_domains_flag() -> None:
     source = (ROOT / "src" / "wz_pipeline" / "pipelines" / "fewshot_batch.py").read_text(encoding="utf-8")
     assert "--domains" in source
+    assert "--feedback-run-id" in source
 
 
 def test_fewshot_batch_uses_empty_scene_terms_for_unconfigured_dialect() -> None:
