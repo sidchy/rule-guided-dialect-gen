@@ -41,6 +41,14 @@ sentence_length:
   max: 25
 
 
+# ------ task 均衡与 prompt 变体 ------
+# 弱场景在可用词组少时，允许同一词组按不同参考例句生成少量 prompt 变体，
+# 用来减少配额空转，同时避免 daily_chat 过度吃掉总量。
+
+task_balance:
+  max_prompt_variants_per_word_combo: 4
+
+
 # ------ 普通话标记词 ------
 # 来源: fewshot_batch.py:1340-1346 MANDARIN_MARKERS
 # 一句中出现 >= 2 个则判定为混入普通话

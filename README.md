@@ -127,6 +127,52 @@ dialects/你的方言/
 
 ---
 
+## 配置解析与联动规则
+
+这部分决定“文件放在哪”“配置改了以后哪条 pipeline 会受影响”。
+
+### 1. 当前激活哪个方言
+
+- 运行时优先读取环境变量 `WZ_PIPELINE_DIALECT`
+- 如果没设，默认用 `wenzhou`
+- 所以切换方言最直接的方式是：
+
+```bash
+export WZ_PIPELINE_DIALECT=你的方言目录名
+```
+
+### 2. 路径怎么解析
+
+- `dialect.yaml` 里的相对路径，默认都相对于 `dialects/<dialect>/` 解析
+- 如果本地方言 overlay 文件或目录不存在，运行时会回退到项目根目录已有资源
+- 当前会自动回退的主要目录有：`configs/`、`data/`、`runs/`、`registry/`、`curated/`、`prompts/`
+- 温州话还额外对 `grammar_spec.md` 和 `scene_catalog.json` 做了兼容回退
+- `domain_catalog.json` 不建议依赖隐式回退；如果你要用 `--domains`，最好在方言目录里明确提供这个文件
+
+### 3. 哪些配置影响哪条链路
+
+| 配置/文件 | 影响的阶段 | 作用 |
+|------|------|------|
+| `dialect.yaml` | 全链路 | 路径、句长、普通话 marker、表面词校验、task balance |
+| `configs/scene_policy.json` | 生成 | 决定哪些场景默认跑、哪些是 sidecar/candidate |
+| `configs/scene_catalog.json` | 生成 | 场景关键词、意图、现代词汇提示 |
+| `configs/domain_catalog.json` | 生成 + review | `--domains` 选中的专用词、禁用词、备注 |
+| `grammar/grammar_spec.md` | 生成 + repair + review | 给 LLM 和人工审核提供语法章节摘录 |
+| `grammar/grammar_rules.yaml` | 校验 + repair + review | 机器可执行语法规则、修补触发、章节映射 |
+| `data/cleaned/cleaned_records_primary.jsonl` | 抽种子 + 兜底词表 | 原始清洗词典主输入 |
+| `data/extracted_training_sentences/*.jsonl` | 生成 | few-shot 例句来源 |
+| `data/controlled_generation/assets/replaceable_lexicon.jsonl` | 生成 | 场景词表、核心词/辅助词候选 |
+| `data/controlled_generation/assets/external_term_catalog.json` | 生成 | 现代生活词、地名等外部词补充 |
+| `summary.json`（上一轮） | 生成 | `--feedback-run-id/--feedback-summary` 的回流输入 |
+
+### 4. 当前 prompt 的真实状态
+
+- `prompts/` 目录已经有运行时路径入口，但当前 `fewshot_batch` 还不是直接读取 `generation_system.md / generation_user.md / repair_system.md`
+- 目前主链路是“代码内拼 prompt + 注入 `grammar_spec.md` 摘录 + 注入 domain/scene/task 上下文”
+- 所以如果你现在只改 `prompts/*.md`，**不会**自动改变 `fewshot_batch` 的生成行为
+
+---
+
 ## 8 个入口详解
 
 ### 入口 1: `dialect.yaml` — 方言身份证
@@ -138,6 +184,7 @@ dialects/你的方言/
 | `dialect_name` | 方言名称（如"粤语"、"闽南语"） | 是 |
 | `dialect_code` | 英文短代码（如 yue、nan） | 是 |
 | `sentence_length.min/max` | 生成句子的字数范围 | 是 |
+| `task_balance.max_prompt_variants_per_word_combo` | 同一词组允许的 prompt 变体上限，用来减少弱场景配额空转 | 否 |
 | `mandarin_markers` | 普通话标记词列表 | 是 |
 | `stopwords` | 停用词 | 否 |
 | `bad_definition_hints` | 释义中的排除关键词 | 否 |
@@ -214,6 +261,11 @@ high_risk_patterns:
 | `generation_user.md` | 给 LLM 具体的任务（例句、核心词等） | 每个 task |
 | `repair_system.md` | 告诉修补 LLM 如何最小幅度修改 | 触发修补时 |
 
+**当前状态**：
+- 这些路径已经进入运行时配置层
+- 但 `fewshot_batch` 目前还没有直接从这三个 markdown 文件读 prompt
+- 当前主链路仍以内置 prompt 模板为主，再叠加 grammar / domain / scene 上下文
+
 ### 入口 8: `data/source_dictionaries/` — 原始数据
 
 把你的方言词典文件（xlsx、csv、jsonl 等）放在这里。
@@ -223,6 +275,191 @@ high_risk_patterns:
 - 释义
 - 方言例句
 - 普通话翻译
+
+---
+
+## 原始文件格式速查
+
+这里列的是当前主 pipeline 真正会读到的格式。不是所有字段都必填，但这些最小字段最好保证。
+
+### 1. `data/cleaned/cleaned_records_primary.jsonl`
+
+用途：
+- `wz-extract-training-sentences` 的直接输入
+- `fewshot_batch` 在缺词表时的兜底来源
+
+最小建议字段：
+
+```json
+{
+  "wz_word_train": "方言词",
+  "definition_norm": "释义",
+  "example_wz_train": "方言例句",
+  "example_zh_train": "普通话翻译",
+  "source_file": "原始文件名",
+  "source_row_id": 123
+}
+```
+
+说明：
+- `example_wz_train` 为空的行不会进入种子句子池
+- `wz_word_train` 最好是 2-4 字的可复用词面，便于进入生成候选
+- `source_file / source_row_id` 不是强制，但强烈建议保留，方便追溯
+
+### 2. `data/extracted_training_sentences/short_8_20.jsonl`
+
+用途：
+- `fewshot_batch` 当前主要把它当 few-shot 例句池
+
+由 `wz-extract-training-sentences` 自动产出，典型字段：
+
+```json
+{
+  "sentence_id": "dict_ex_xxx",
+  "wz_sentence": "方言句子",
+  "zh_sentence": "普通话翻译",
+  "wz_word": "来源词",
+  "definition": "来源释义",
+  "char_len": 16,
+  "length_bucket": "short",
+  "source_file": "原始文件名",
+  "source_row_id": 123
+}
+```
+
+### 3. `data/controlled_generation/assets/replaceable_lexicon.jsonl`
+
+用途：
+- `fewshot_batch` 的主词表来源，用来给每个场景挑核心词和辅助词
+
+最小建议字段：
+
+```json
+{
+  "wz_word": "方言词",
+  "mandarin_headword": "普通话词头",
+  "definition": "释义",
+  "primary_scene_id": "scene_id",
+  "semantic_class": "noun",
+  "slot_kind": "noun"
+}
+```
+
+说明：
+- 实际文件可以带更多打标字段，例如 `scene_tags`、`scene_scores`、`confidence`
+- 当前生成主链最关心的是：词面、释义、主场景、语义类别、slot 类别
+
+### 4. `data/controlled_generation/assets/external_term_catalog.json`
+
+用途：
+- 给生成链路补现代生活词、设备名、地名等词汇
+
+当前支持的主要键：
+
+```json
+{
+  "example_mined_terms": [
+    {
+      "term": "笔记本",
+      "scene_tags": ["digital_chat", "work_study"],
+      "primary_topic_scene": "digital_chat",
+      "semantic_class": "device"
+    }
+  ],
+  "place_names": [
+    {
+      "term": "七都",
+      "scene_tags": ["transport_trip", "daily_chat"],
+      "primary_scene_id": "transport_trip"
+    }
+  ]
+}
+```
+
+### 5. `configs/scene_policy.json`
+
+最小格式：
+
+```json
+{
+  "mainline_focus_scenes": ["scene_1", "scene_2"],
+  "sidecar_scenes": ["scene_3"],
+  "candidate_scenes": ["scene_4"],
+  "default_scenes": ["scene_1", "scene_2"],
+  "priority_scenes": ["scene_1", "scene_2", "scene_3", "scene_4"]
+}
+```
+
+联动规则：
+- `default_scenes` 是 CLI 不传 `--scenes` 时的默认集合
+- `priority_scenes` 决定 task allocator 的全局顺序和可调度场景池
+- `sidecar_scenes` 只在额外 gate 满足时开放
+
+### 6. `configs/scene_catalog.json`
+
+最小格式：
+
+```json
+[
+  {
+    "scene_id": "scene_1",
+    "label": "场景中文名",
+    "intents": ["这个场景下会说什么"],
+    "zh_keywords": ["普通话关键词"],
+    "dialect_keywords": ["方言关键词"],
+    "default_required_modern_words": [],
+    "default_preferred_modern_words": []
+  }
+]
+```
+
+### 7. `configs/domain_catalog.json`
+
+最小格式：
+
+```json
+[
+  {
+    "domain_id": "medical",
+    "label": "医疗",
+    "scene_allowlist": ["health_medical"],
+    "required_terms": ["挂号"],
+    "preferred_terms": ["门诊"],
+    "blocked_terms": ["偏方"],
+    "prompt_notes": ["生成时优先用看病场景用语。"],
+    "review_notes": ["审查时检查专用词是否自然。"]
+  }
+]
+```
+
+联动规则：
+- 只有运行时显式传 `--domains medical` 才会生效
+- 生效后会同时进入 prompt、validation、review TSV 和 LLM critic
+- 如果传了不存在的 `domain_id`，pipeline 会直接报错
+
+### 8. `grammar/grammar_rules.yaml`
+
+最小格式：
+
+```yaml
+review_markers: []
+repair_trigger_pattern: ""
+completion_marker: ""
+allowed_after_completion: ""
+max_completion_count: 1
+sentence_final_particle: ""
+max_sentence_final_count: 1
+high_risk_patterns: []
+modal_verbs_before_completion:
+  pattern: ""
+marker_to_sections: {}
+reason_to_sections: {}
+```
+
+联动规则：
+- `high_risk_patterns` 进入机器校验
+- `repair_trigger_pattern` 决定是否触发 LLM repair
+- `marker_to_sections / reason_to_sections` 决定从 `grammar_spec.md` 摘哪几段给 repair 和 review
 
 ### LLM API 配置 — `.env` 文件
 
@@ -289,6 +526,11 @@ wz-generate-fewshot-batch --tasks 200 --provider deepseek
 | `--tasks N` | 生成任务数（每个任务产 5 句） | 200 |
 | `--provider` | LLM 提供商 | deepseek |
 | `--scenes` | 指定场景（逗号分隔） | 全部 mainline |
+| `--domains` | 指定领域（逗号分隔），读取 `domain_catalog.json` | 空 |
+| `--feedback-run-id` | 用上一轮 `summary.json` 做配额/采样回流 | 空 |
+| `--feedback-summary` | 直接指定上一轮 `summary.json` 路径 | 空 |
+| `--food-modern-trial-ratio` | `food_dining` 中现代词 trial lane 占比 | 0.25 |
+| `--disable-grammar-repair` | 跳过高风险功能词的二次 repair | 否 |
 | `--resume` | 从断点恢复 | 否 |
 | `--run-id` | 指定 run ID | 自动生成 |
 

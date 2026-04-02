@@ -258,3 +258,94 @@ def test_create_tasks_balanced_uses_feedback_scene_weights() -> None:
     for task in tasks:
         scene_counts[task["scene_id"]] = scene_counts.get(task["scene_id"], 0) + 1
     assert scene_counts["health_medical"] > scene_counts["food_dining"]
+
+
+def test_create_tasks_balanced_allows_limited_prompt_variants_for_sparse_scenes() -> None:
+    originals = {
+        "build_domain_context": batch_module.build_domain_context,
+        "build_task": batch_module.build_task,
+        "core_is_allowed": batch_module.core_is_allowed,
+        "core_is_blocked": batch_module.core_is_blocked,
+        "scene_match_score": batch_module.scene_match_score,
+        "select_core_and_support_words": batch_module.select_core_and_support_words,
+        "related_examples": batch_module.related_examples,
+        "PRIORITY_SCENES": batch_module.PRIORITY_SCENES,
+        "FOCUS_SCENES": batch_module.FOCUS_SCENES,
+        "MODERN_SIDECAR_SCENES": batch_module.MODERN_SIDECAR_SCENES,
+        "MAX_PROMPT_VARIANTS_PER_WORD_COMBO": batch_module.MAX_PROMPT_VARIANTS_PER_WORD_COMBO,
+    }
+    try:
+        batch_module.build_domain_context = lambda domain_ids, scene_id: {
+            "domain_ids": [],
+            "domain_labels": [],
+            "required_terms": [],
+            "preferred_terms": [],
+            "blocked_terms": [],
+            "prompt_notes": [],
+            "review_notes": [],
+        }
+        batch_module.build_task = (
+            lambda examples, core_word, support_words, scene_id, task_id, lane, core_tier, domain_ids, domain_context=None: {
+                "task_id": task_id,
+                "scene_id": scene_id,
+                "core_word": core_word["wz_word"],
+                "support_words": [word["wz_word"] for word in support_words],
+                "prompt_example_count": len(examples),
+            }
+        )
+        batch_module.core_is_allowed = lambda scene_id, wz_word: True
+        batch_module.core_is_blocked = lambda scene_id, wz_word, definition, source_file="": False
+        batch_module.scene_match_score = lambda scene_id, *texts: 1 if any(texts) else 0
+        batch_module.related_examples = lambda anchor, scene_examples, limit=4: [anchor]
+        batch_module.select_core_and_support_words = (
+            lambda anchor, scene_words, examples, scene_id, rng=None, forced_core_word=None, domain_context=None: (
+                scene_words[0],
+                [],
+            )
+        )
+        batch_module.PRIORITY_SCENES = ["sparse_scene", "rich_scene"]
+        batch_module.FOCUS_SCENES = []
+        batch_module.MODERN_SIDECAR_SCENES = []
+        batch_module.MAX_PROMPT_VARIANTS_PER_WORD_COMBO = 2
+
+        examples_by_scene = {
+            "sparse_scene": [
+                _example("甲词", "稀疏场景词", "sparse_scene", "甲词例句一。", "稀疏例句一。"),
+                _example("甲词", "稀疏场景词", "sparse_scene", "甲词例句二。", "稀疏例句二。"),
+                _example("甲词", "稀疏场景词", "sparse_scene", "甲词例句三。", "稀疏例句三。"),
+            ],
+            "rich_scene": [
+                _example("乙词", "丰富场景词", "rich_scene", "乙词例句一。", "丰富例句一。"),
+                _example("乙词", "丰富场景词", "rich_scene", "乙词例句二。", "丰富例句二。"),
+                _example("乙词", "丰富场景词", "rich_scene", "乙词例句三。", "丰富例句三。"),
+            ],
+        }
+        words_by_scene = {
+            "sparse_scene": [
+                _word("甲词", "稀疏场景词", "sparse_scene"),
+                _word("甲辅", "稀疏辅助词", "sparse_scene"),
+                _word("甲备", "稀疏备用词", "sparse_scene"),
+            ],
+            "rich_scene": [
+                _word("乙词", "丰富场景词", "rich_scene"),
+                _word("乙辅", "丰富辅助词", "rich_scene"),
+                _word("乙备", "丰富备用词", "rich_scene"),
+            ],
+        }
+
+        tasks = batch_module.create_tasks_balanced(
+            examples_by_scene,
+            words_by_scene,
+            4,
+            seed=0,
+            scene_filter=["sparse_scene", "rich_scene"],
+        )
+    finally:
+        for name, value in originals.items():
+            setattr(batch_module, name, value)
+
+    scene_counts = {}
+    for task in tasks:
+        scene_counts[task["scene_id"]] = scene_counts.get(task["scene_id"], 0) + 1
+
+    assert scene_counts == {"sparse_scene": 2, "rich_scene": 2}

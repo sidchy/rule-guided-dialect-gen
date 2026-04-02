@@ -143,6 +143,21 @@ SCENE_SUPPORT_POOL_SIZES = {
     "work_study": _scene_support_pool_size("work_study", 4),
 }
 
+TASK_BALANCE_SETTINGS = DIALECT_SETTINGS.get("task_balance") or {}
+
+
+def _task_balance_int(field: str, default: int) -> int:
+    value = TASK_BALANCE_SETTINGS.get(field)
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+MAX_PROMPT_VARIANTS_PER_WORD_COMBO = max(1, _task_balance_int("max_prompt_variants_per_word_combo", 1))
+
 
 def domain_term_priority(
     surface: str,
@@ -181,6 +196,39 @@ def domain_text_score(domain_context: dict[str, Any] | None, *texts: str | None)
         if term and term in merged:
             score += 1
     return score
+
+
+def task_word_combo_signature(
+    scene_id: str,
+    core_word_surface: str,
+    support_words: list[dict[str, Any]] | list[str],
+) -> tuple[str, str, frozenset[str]]:
+    normalized_support_words: set[str] = set()
+    for word in support_words:
+        if isinstance(word, dict):
+            surface = str(word.get("wz_word") or "").strip()
+        else:
+            surface = str(word).strip()
+        if surface:
+            normalized_support_words.add(surface)
+    return (
+        scene_id,
+        core_word_surface,
+        frozenset(normalized_support_words),
+    )
+
+
+def task_prompt_signature(
+    scene_id: str,
+    core_word_surface: str,
+    support_words: list[dict[str, Any]] | list[str],
+    examples: list[dict[str, Any]],
+) -> tuple[str, str, frozenset[str], tuple[str, ...]]:
+    prompt_context = tuple(
+        clean_wz(str(example.get("wz_sentence") or "")) or str(example.get("wz_word") or "").strip()
+        for example in examples[:4]
+    )
+    return task_word_combo_signature(scene_id, core_word_surface, support_words) + (prompt_context,)
 
 
 def clean_wz(text: str) -> str:
@@ -1222,7 +1270,8 @@ def create_tasks_balanced(
     """Create tasks with scene balance, anchor examples, and core-word-driven prompts."""
     rng = random.Random(seed)
     tasks = []
-    used_task_signatures: set[tuple[str, str, frozenset[str]]] = set()
+    used_prompt_signatures: set[tuple[str, str, frozenset[str], tuple[str, ...]]] = set()
+    word_combo_variant_counts: Counter[tuple[str, str, frozenset[str]]] = Counter()
     selected_domain_ids = normalize_domain_ids(domain_ids)
     feedback = feedback_plan or {}
     feedback_scene_weights = feedback.get("scene_weights") if isinstance(feedback.get("scene_weights"), dict) else {}
@@ -1447,14 +1496,14 @@ def create_tasks_balanced(
                         support_words = []
                 lane = "food_modern_trial" if is_trial_modern else "mainline"
                 core_tier = "trial_modern" if is_trial_modern else "stable"
-                signature = (
-                    scene,
-                    core_word_surface,
-                    frozenset(word["wz_word"] for word in support_words),
-                )
-                if signature in used_task_signatures:
+                word_combo_signature = task_word_combo_signature(scene, core_word_surface, support_words)
+                if word_combo_variant_counts[word_combo_signature] >= MAX_PROMPT_VARIANTS_PER_WORD_COMBO:
                     continue
-                used_task_signatures.add(signature)
+                prompt_signature = task_prompt_signature(scene, core_word_surface, support_words, exs)
+                if prompt_signature in used_prompt_signatures:
+                    continue
+                used_prompt_signatures.add(prompt_signature)
+                word_combo_variant_counts[word_combo_signature] += 1
                 tid = f"fs_{hashlib.md5(f'{scene}_{len(tasks)}_{seed}'.encode()).hexdigest()[:10]}"
                 task = build_task(
                     exs,
