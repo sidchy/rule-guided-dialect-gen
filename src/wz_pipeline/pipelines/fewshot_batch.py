@@ -764,6 +764,9 @@ def support_priority(scene_id: str, core_surface: str, word: dict[str, Any]) -> 
         score += 1
     if scene_id == "weather_safety" and semantic_class in {"device", "action", "adjective", "place"}:
         score += 1
+    # Place names (地名) get a general boost across all scenes
+    if slot_kind == "place" and str(word.get("source_type") or "") in ("place_name", "example_mined"):
+        score += 2
     return score
 
 
@@ -949,6 +952,25 @@ def allocate_scene_quotas(
         chosen_scene = max(ordered_scenes, key=lambda scene: current_weights[scene])
         quotas[chosen_scene] += 1
         current_weights[chosen_scene] -= total_weight
+    # Enforce minimum floor: each scene gets at least ~8% of total tasks
+    if len(ordered_scenes) > 1 and num_tasks >= len(ordered_scenes) * 2:
+        min_per_scene = max(1, num_tasks // (len(ordered_scenes) * 2))
+        deficit_scenes = [s for s in ordered_scenes if quotas[s] < min_per_scene]
+        surplus_scenes = sorted(
+            [s for s in ordered_scenes if quotas[s] > min_per_scene],
+            key=lambda s: quotas[s],
+            reverse=True,
+        )
+        for s in deficit_scenes:
+            needed = min_per_scene - quotas[s]
+            for donor in surplus_scenes:
+                give = min(needed, quotas[donor] - min_per_scene)
+                if give > 0:
+                    quotas[donor] -= give
+                    quotas[s] += give
+                    needed -= give
+                if needed <= 0:
+                    break
     return quotas
 
 
@@ -1048,7 +1070,8 @@ def select_core_and_support_words(
         score = overlap_score(combined_sig, sig)
         if scene_id == "shopping_payment" and wz_word in SHOPPING_AMOUNT_TERMS:
             score = max(score, 1)
-        if score <= 0 and not word.get("is_modern", False):
+        is_place = str(word.get("slot_kind") or "") == "place"
+        if score <= 0 and not word.get("is_modern", False) and not is_place:
             continue
         scene_priority = support_priority(scene_id, core_surface, word)
         domain_priority = domain_term_priority(
@@ -1105,13 +1128,14 @@ def select_core_and_support_words(
             chosen = rng.choice(pool) if rng is not None else pool[0]
         support_candidates = [chosen] + [word for word in support_candidates if word != chosen]
 
+    max_support = 2 if len(support_candidates) >= 3 else 1
     for word in support_candidates:
         wz_word = str(word.get("wz_word") or "").strip()
         if wz_word in seen_words:
             continue
         support_words.append(word)
         seen_words.add(wz_word)
-        if len(support_words) >= 1:
+        if len(support_words) >= max_support:
             break
 
     if forced_core_word is None and core_word is None and support_words and core_word_looks_usable(support_words[0], scene_id, anchor):
@@ -1377,7 +1401,7 @@ def create_tasks_balanced(
                 str(example.get("source_file") or ""),
             )
             and str(example.get("wz_word") or "").strip() in scene_word_set
-            and word_example_counts[str(example.get("wz_word") or "").strip()] >= 2
+            and word_example_counts[str(example.get("wz_word") or "").strip()] >= 1
             and scene_match_score(
                 scene,
                 example.get("wz_word", ""),
@@ -1416,7 +1440,7 @@ def create_tasks_balanced(
                     str(example.get("definition") or "").strip(),
                     str(example.get("source_file") or ""),
                 )
-                and word_example_counts[str(example.get("wz_word") or "").strip()] >= 2
+                and word_example_counts[str(example.get("wz_word") or "").strip()] >= 1
                 and scene_match_score(
                     scene,
                     example.get("wz_word", ""),
