@@ -9,6 +9,7 @@
 - `extract_dictionary_training_sentences.py`
 - `generate_long_sentences_fewshot_batch.py`
 - `build_modern_anchor_candidates.py`
+- `build_controlled_generation_assets.py`
 - `export_review_package.py`
 - `import_review_results.py`
 - `promote_reviewed_samples.py`
@@ -31,3 +32,8 @@
 - 不删除历史资产
 - 不把它们默认当成主线入口
 - 如需复用，先明确登记为 `legacy`，再决定是否迁移进 `src/wz_pipeline/`
+
+补充说明：
+
+- `generate_long_sentences_fewshot_batch.py` 当前已经支持 scene 子场景拆分、speech-act 轮转、跨 run 去重和 task 多样性审计。
+- `build_controlled_generation_assets.py` 负责产出 scene catalog / modern-word catalog 这类主线资产；如果要扩场景，优先改这里和 `configs/scene_policy.json`，而不是直接在 pipeline 里写死。

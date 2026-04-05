@@ -165,6 +165,14 @@ export WZ_PIPELINE_DIALECT=你的方言目录名
 | `data/controlled_generation/assets/external_term_catalog.json` | 生成 | 现代生活词、地名等外部词补充 |
 | `summary.json`（上一轮） | 生成 | `--feedback-run-id/--feedback-summary` 的回流输入 |
 
+当前 `fewshot_batch` 还会把 task 级审计信息写进 `summary.json`，包括：
+
+- `scene_task_counts / scene_target_quotas / scene_task_shortfalls`
+- `task_speech_act_counts / task_speech_act_pattern_counts`
+- `scene_core_task_counts / scene_support_task_counts / scene_place_support_task_counts`
+- `scene_distinct_core_count / scene_distinct_support_count`
+- `scene_top_core_words / scene_top_support_words`
+
 ### 4. 当前 prompt 的真实状态
 
 - `prompts/` 目录已经有运行时路径入口，但当前 `fewshot_batch` 还不是直接读取 `generation_system.md / generation_user.md / repair_system.md`
@@ -199,15 +207,24 @@ export WZ_PIPELINE_DIALECT=你的方言目录名
 
 ```json
 {
-  "mainline_focus_scenes": ["daily_life", "food", "transport"],
-  "sidecar_scenes": ["work"],
-  "candidate_scenes": ["medical"]
+  "mainline_focus_scenes": ["home_life", "food_dining", "transport_trip"],
+  "sidecar_scenes": ["scene_that_needs_extra_gate"],
+  "candidate_scenes": ["future_scene"]
 }
 ```
 
 - **mainline**：默认进入批量生成的场景
 - **sidecar**：需要额外 gate 才能生成的场景
 - **candidate**：暂不生成，等主线稳定后再开
+
+当前主线支持把一个宽场景继续拆成多个可调度子场景，例如把 `digital_chat` 拆成：
+
+- `digital_ai_assistant`
+- `digital_messaging_call`
+- `digital_device_trouble`
+- `digital_app_operation`
+
+这样主线 allocator、speech act 轮转和 review 统计都能在子场景粒度上做均衡。
 
 ### 入口 3: `configs/scene_catalog.json` — 场景详情
 
@@ -361,8 +378,8 @@ high_risk_patterns:
   "example_mined_terms": [
     {
       "term": "笔记本",
-      "scene_tags": ["digital_chat", "work_study"],
-      "primary_topic_scene": "digital_chat",
+      "scene_tags": ["digital_ai_assistant", "work_study"],
+      "primary_topic_scene": "digital_ai_assistant",
       "semantic_class": "device"
     }
   ],
@@ -394,6 +411,7 @@ high_risk_patterns:
 - `default_scenes` 是 CLI 不传 `--scenes` 时的默认集合
 - `priority_scenes` 决定 task allocator 的全局顺序和可调度场景池
 - `sidecar_scenes` 只在额外 gate 满足时开放
+- 如果某个父场景在 task 构造时需要拆成多个子场景，建议把子场景直接列进 `default_scenes / priority_scenes`
 
 ### 6. `configs/scene_catalog.json`
 
@@ -513,17 +531,21 @@ wz-generate-fewshot-batch --tasks 200 --provider deepseek
 
 **做了什么**：
 - 按场景均衡分配生成任务
+- 对每个 task 轮转语气类型（speech acts），避免全是同一种句法功能
 - 为每个任务选择 anchor 例句 + 核心词 + 辅助词
-- 调用 LLM 生成 5 句
+- 在同场景内限制高频 core / support 过度复用
+- 对 place-name support 做单独轮转和占比控制
+- 调用 LLM 生成 3 句
 - 语法校验（grammar guardrails）
 - 表面词校验（source surface guardrails）
 - 如果检测到高风险功能词，尝试 LLM 修补
+- 记录 `example_sentences / example_sources / structural_skeleton / target_speech_act`
 
 **关键参数**：
 
 | 参数 | 说明 | 默认 |
 |------|------|------|
-| `--tasks N` | 生成任务数（每个任务产 5 句） | 200 |
+| `--tasks N` | 生成任务数（每个任务产 3 句） | 200 |
 | `--provider` | LLM 提供商 | deepseek |
 | `--scenes` | 指定场景（逗号分隔） | 全部 mainline |
 | `--domains` | 指定领域（逗号分隔），读取 `domain_catalog.json` | 空 |
@@ -536,9 +558,9 @@ wz-generate-fewshot-batch --tasks 200 --provider deepseek
 
 **输出**（在 `runs/fewshot_batch/<run_id>/` 下）：
 - `results.jsonl` — 全部生成结果（含通过和失败）
-- `rule_gate.jsonl` — 通过规则校验的句子
-- `review.tsv` — 人工审核用的 TSV
-- `summary.json` — 运行统计
+- `rule_gate.jsonl` — contract 化后的全量候选，含 `rule_gate_status=pass/fail`
+- `review.tsv` — 人工审核用的 TSV，包含 scene / speech act / failure bucket 元数据
+- `summary.json` — 运行统计和 task 级多样性审计
 
 ### Step 3: 导出人工审核包
 
@@ -609,9 +631,9 @@ wz-build-training-candidates
 ```
 config.json                — 运行配置（可复现）
 results.jsonl              — 全部结果
-rule_gate.jsonl            — 规则校验通过的
+rule_gate.jsonl            — contract 化候选（含 rule_gate_status）
 review.tsv                 — 人工审核用
-summary.json               — 机器指标 + 人工指标
+summary.json               — 机器指标 + task 审计 + 人工指标
 promotion_candidates.jsonl — 晋级候选
 ```
 
@@ -652,7 +674,7 @@ promotion_candidates.jsonl — 晋级候选
 ```
 
 > **当前状态**：框架代码已开始从 `dialects/<dialect>/dialect.yaml` 读取运行时配置，并支持本地方言 overlay 不存在时回退到根目录现有资源。
-> 仍有一部分温州话启发式常量尚未完全移出代码（详见 `docs/AUDIT_REPORT.md`），但生成主链、语法摘录和 review metadata 已接入配置层。
+> 仍有一部分默认配置和示例资源保留在仓库根目录，但主链已经把 scene 分层、speech act 类型、task balance 和 review metadata 接入配置层。
 
 ---
 

@@ -16,11 +16,20 @@
 
 当前产品范围仍覆盖多场景语料，但工程 rollout 分层执行：
 
-- `mainline`: `home_life`, `food_dining`, `transport_trip`, `shopping_payment`, `weather_safety`
-- `sidecar`: `digital_chat`, `work_study`
-- `candidate`: `daily_chat`, `health_medical`
+- `mainline`: `home_life`, `food_dining`, `transport_trip`, `shopping_payment`, `weather_safety`, `health_medical`, `work_study`, `digital_ai_assistant`, `digital_messaging_call`, `digital_device_trouble`, `digital_app_operation`
+- `sidecar`: 当前为空
+- `candidate`: `daily_chat`, `digital_chat`
 
 统一配置见 [`configs/scene_policy.json`](../configs/scene_policy.json)。
+
+## 当前主线约束
+
+主线 `fewshot_batch` 当前还带这些工程约束：
+
+1. task allocator 会做 scene quota floor，避免单一场景吃掉大部分任务。
+2. 同 scene 内会限制 core/support 高频复用，并把统计写进 `summary.json`。
+3. `transport_trip` 等 place-heavy scene 会对地名 support 单独轮转，不与普通 support 混成一个无约束池。
+4. review 输出默认带 `turn_role / target_speech_act / task_speech_acts / sentence_index`，便于按交际功能抽查。
 
 ## 放量门槛
 

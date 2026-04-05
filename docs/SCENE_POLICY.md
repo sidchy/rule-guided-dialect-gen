@@ -25,13 +25,25 @@
   - `transport_trip`
   - `shopping_payment`
   - `weather_safety`
-- `sidecar_scenes`
-  - `digital_chat`
+  - `health_medical`
   - `work_study`
+  - `digital_ai_assistant`
+  - `digital_messaging_call`
+  - `digital_device_trouble`
+  - `digital_app_operation`
+- `sidecar_scenes`
+  - 当前为空
 - `candidate_scenes`
   - `daily_chat`
-  - `health_medical`
+  - `digital_chat`
 
 ## 解释
 
-产品层上，上述场景都属于需求场景。工程层上，只有 `mainline_focus_scenes` 会默认进入当前批量生成主线。其余场景需要先满足各自 gate，再决定是否升级。
+产品层上，上述场景都属于需求场景。工程层上，`mainline_focus_scenes` 会默认进入当前批量生成主线。
+
+当前 scene policy 有两个新增约定：
+
+- 允许把一个宽父场景拆成多个主线子场景。例如 `digital_chat` 不再直接放量，而是拆成 `digital_ai_assistant / digital_messaging_call / digital_device_trouble / digital_app_operation`
+- `default_scenes` 和 `priority_scenes` 建议直接放子场景，而不是只放父场景。这样 allocator、speech-act 轮转和 review 汇总都能在子场景粒度上均衡
+
+如果后续某个新场景仍需要额外 anchor gate 或专项 review，再放回 `sidecar_scenes`。

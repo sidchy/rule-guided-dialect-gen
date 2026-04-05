@@ -4,22 +4,31 @@
     "food_dining",
     "transport_trip",
     "shopping_payment",
-    "weather_safety"
+    "weather_safety",
+    "health_medical",
+    "work_study",
+    "digital_ai_assistant",
+    "digital_messaging_call",
+    "digital_device_trouble",
+    "digital_app_operation"
   ],
-  "sidecar_scenes": [
-    "digital_chat",
-    "work_study"
-  ],
+  "sidecar_scenes": [],
   "candidate_scenes": [
     "daily_chat",
-    "health_medical"
+    "digital_chat"
   ],
   "default_scenes": [
     "home_life",
     "food_dining",
     "transport_trip",
     "shopping_payment",
-    "weather_safety"
+    "weather_safety",
+    "health_medical",
+    "work_study",
+    "digital_ai_assistant",
+    "digital_messaging_call",
+    "digital_device_trouble",
+    "digital_app_operation"
   ],
   "priority_scenes": [
     "home_life",
@@ -29,6 +38,10 @@
     "weather_safety",
     "health_medical",
     "work_study",
+    "digital_ai_assistant",
+    "digital_messaging_call",
+    "digital_device_trouble",
+    "digital_app_operation",
     "digital_chat",
     "daily_chat"
   ]

@@ -2,6 +2,7 @@ import csv
 import json
 import sys
 import tempfile
+from collections import Counter
 from pathlib import Path
 
 from wz_pipeline.jsonl import read_jsonl
@@ -37,16 +38,25 @@ def _example(surface: str, definition: str, scene_id: str, wz_sentence: str, zh_
     }
 
 
-def _word(surface: str, definition: str, scene_id: str) -> dict[str, object]:
+def _word(
+    surface: str,
+    definition: str,
+    scene_id: str,
+    *,
+    semantic_class: str = "noun",
+    slot_kind: str = "noun",
+    source_type: str = "test",
+    modern_priority: int = 0,
+) -> dict[str, object]:
     return {
         "wz_word": surface,
         "definition": definition,
         "scene_id": scene_id,
-        "semantic_class": "noun",
-        "slot_kind": "noun",
-        "source_type": "test",
-        "is_modern": False,
-        "modern_priority": 0,
+        "semantic_class": semantic_class,
+        "slot_kind": slot_kind,
+        "source_type": source_type,
+        "is_modern": modern_priority > 0,
+        "modern_priority": modern_priority,
     }
 
 
@@ -192,6 +202,7 @@ def test_fewshot_batch_offline_dry_runs_cover_baseline_domain_and_feedback() -> 
             "prepare_run_layout": batch_module.prepare_run_layout,
             "register_run": batch_module.register_run,
             "build_client": batch_module.build_client,
+            "load_sibling_dedup_state": batch_module.load_sibling_dedup_state,
             "load_wz_word_set": batch_module.load_wz_word_set,
             "load_examples_by_scene": batch_module.load_examples_by_scene,
             "load_words_by_scene": batch_module.load_words_by_scene,
@@ -215,6 +226,7 @@ def test_fewshot_batch_offline_dry_runs_cover_baseline_domain_and_feedback() -> 
             batch_module.prepare_run_layout = lambda pipeline_name, run_id: _layout(runs_root / pipeline_name, run_id)
             batch_module.register_run = lambda entry: registered_runs.append(entry)
             batch_module.build_client = lambda provider: (object(), "fake-model", provider)
+            batch_module.load_sibling_dedup_state = lambda runs_root, current_run_id: (set(), Counter())
             batch_module.load_wz_word_set = _known_words
             batch_module.load_examples_by_scene = _examples_by_scene
             batch_module.load_words_by_scene = _words_by_scene
@@ -283,13 +295,25 @@ def test_fewshot_batch_offline_dry_runs_cover_baseline_domain_and_feedback() -> 
         assert baseline_config["feedback"]["enabled"] is False
         assert "failure_analysis" in baseline_summary["machine_metrics"]
         assert baseline_summary["machine_metrics"]["rule_pass_count"] > 0
+        assert baseline_summary["extra"]["scene_task_counts"]
+        assert baseline_summary["extra"]["scene_target_quotas"]
+        assert baseline_summary["extra"]["task_speech_act_counts"]
+        assert baseline_summary["extra"]["scene_core_task_counts"]
+        assert baseline_summary["extra"]["scene_support_task_counts"]
+        assert baseline_summary["extra"]["scene_place_support_task_counts"] is not None
+        assert baseline_summary["extra"]["scene_distinct_core_count"]
+        assert baseline_summary["extra"]["scene_distinct_support_count"]
         assert "failure_buckets" in baseline_header
         assert "failure_primary_bucket" in baseline_header
         assert "review_focus" in baseline_header
+        assert "target_speech_act" in baseline_header
+        assert "task_speech_acts" in baseline_header
         assert baseline_rule_gate
         assert "validation" in baseline_rule_gate[0]
         assert "grammar_reasons" in baseline_rule_gate[0]["validation"]
         assert "domain_required_hits" in baseline_rule_gate[0]["validation"]
+        assert baseline_rule_gate[0]["target_speech_act"]
+        assert len(baseline_rule_gate[0]["task_speech_acts"]) == 3
 
         domain_config = json.loads((domain_root / "config.json").read_text(encoding="utf-8"))
         domain_summary = json.loads((domain_root / "summary.json").read_text(encoding="utf-8"))
@@ -310,3 +334,389 @@ def test_fewshot_batch_offline_dry_runs_cover_baseline_domain_and_feedback() -> 
         assert "failure_analysis" in feedback_summary["machine_metrics"]
         assert feedback_summary["machine_metrics"]["rule_pass_count"] > 0
         assert len(registered_runs) == 3
+
+
+def test_validate_sentence_rejects_structural_duplicates() -> None:
+    wz = "你行李恁重，我伉你相伴拎，省得你吃力显。"
+    skeleton = batch_module.sentence_skeleton(wz, ["相伴", "共享单车", "车站大道"])
+    validation = batch_module.validate_sentence(
+        wz,
+        "你行李这么重，我陪你一起拿，免得你太累。",
+        known_words={"相伴", "共享单车", "车站大道", "行李", "吃力"},
+        core_word="相伴",
+        support_words=["共享单车", "车站大道"],
+        existing_sentences=set(),
+        existing_skeleton_counts=Counter({skeleton: 1}),
+        candidate_skeleton=skeleton,
+        scene_id="transport_trip",
+        lane="mainline",
+        core_tier="stable",
+        approved_modern_terms=["共享单车", "车站大道"],
+        banned_terms=[],
+        domain_required_terms=[],
+        domain_preferred_terms=[],
+        domain_blocked_terms=[],
+    )
+    assert "structural_duplicate" in validation["reasons"]
+
+
+def test_create_tasks_balanced_covers_all_speech_act_windows() -> None:
+    originals = {
+        "core_is_allowed": batch_module.core_is_allowed,
+        "core_is_blocked": batch_module.core_is_blocked,
+        "word_looks_usable": batch_module.word_looks_usable,
+        "example_looks_usable": batch_module.example_looks_usable,
+        "core_word_looks_usable": batch_module.core_word_looks_usable,
+        "scene_match_score": batch_module.scene_match_score,
+        "build_domain_context": batch_module.build_domain_context,
+    }
+    try:
+        batch_module.core_is_allowed = lambda scene_id, wz_word: True
+        batch_module.core_is_blocked = lambda scene_id, wz_word, definition, source_file="": False
+        batch_module.word_looks_usable = lambda word: True
+        batch_module.example_looks_usable = lambda example: True
+        batch_module.core_word_looks_usable = lambda word, scene_id, anchor=None: True
+        batch_module.scene_match_score = lambda scene_id, *texts: 1 if any(texts) else 0
+        batch_module.build_domain_context = lambda domain_ids, scene_id: {
+            "domain_ids": [],
+            "domain_labels": [],
+            "required_terms": [],
+            "preferred_terms": [],
+            "blocked_terms": [],
+            "prompt_notes": [],
+            "review_notes": [],
+        }
+
+        tasks = batch_module.create_tasks_balanced(
+            examples_by_scene={"home_life": _examples_by_scene()["home_life"]},
+            words_by_scene={"home_life": _words_by_scene()["home_life"]},
+            num_tasks=5,
+            seed=17,
+            scene_filter=["home_life"],
+        )
+    finally:
+        for name, value in originals.items():
+            setattr(batch_module, name, value)
+
+    assert len(tasks) == 5
+    assert {tuple(task["speech_acts"]) for task in tasks} == {
+        ("question", "complaint", "request"),
+        ("complaint", "request", "narration"),
+        ("request", "narration", "evaluation"),
+        ("narration", "evaluation", "question"),
+        ("evaluation", "question", "complaint"),
+    }
+
+
+def test_create_tasks_balanced_allows_example_only_scene() -> None:
+    originals = {
+        "core_is_allowed": batch_module.core_is_allowed,
+        "core_is_blocked": batch_module.core_is_blocked,
+        "word_looks_usable": batch_module.word_looks_usable,
+        "example_looks_usable": batch_module.example_looks_usable,
+        "core_word_looks_usable": batch_module.core_word_looks_usable,
+        "scene_match_score": batch_module.scene_match_score,
+        "build_domain_context": batch_module.build_domain_context,
+    }
+    try:
+        batch_module.core_is_allowed = lambda scene_id, wz_word: True
+        batch_module.core_is_blocked = lambda scene_id, wz_word, definition, source_file="": False
+        batch_module.word_looks_usable = lambda word: True
+        batch_module.example_looks_usable = lambda example: True
+        batch_module.core_word_looks_usable = lambda word, scene_id, anchor=None: True
+        batch_module.scene_match_score = lambda scene_id, *texts: 1 if any(texts) else 0
+        batch_module.build_domain_context = lambda domain_ids, scene_id: {
+            "domain_ids": [],
+            "domain_labels": [],
+            "required_terms": [],
+            "preferred_terms": [],
+            "blocked_terms": [],
+            "prompt_notes": [],
+            "review_notes": [],
+        }
+
+        tasks = batch_module.create_tasks_balanced(
+            examples_by_scene={"health_medical": _examples_by_scene()["health_medical"]},
+            words_by_scene={},
+            num_tasks=5,
+            seed=19,
+            scene_filter=["health_medical"],
+        )
+    finally:
+        for name, value in originals.items():
+            setattr(batch_module, name, value)
+
+    assert len(tasks) == 5
+    assert {task["scene_id"] for task in tasks} == {"health_medical"}
+
+
+def test_expand_scene_targets_splits_digital_chat_into_subscenes() -> None:
+    targets = batch_module.expand_scene_targets(
+        ["digital_chat"],
+        "手机微信消息视频打电话装软件更新密码提醒",
+        expand_digital=True,
+    )
+    assert "digital_chat" in targets
+    assert "digital_ai_assistant" in targets
+    assert "digital_messaging_call" in targets
+    assert "digital_device_trouble" in targets
+    assert "digital_app_operation" in targets
+
+
+def test_stable_core_policy_expanded_for_mainline_scenes() -> None:
+    assert len(batch_module.stable_core_terms("home_life")) >= 8
+    assert len(batch_module.stable_core_terms("transport_trip")) >= 8
+    assert len(batch_module.stable_core_terms("shopping_payment")) >= 8
+    assert len(batch_module.stable_core_terms("weather_safety")) >= 8
+    assert len(batch_module.stable_core_terms("food_dining")) >= 6
+    assert len(batch_module.stable_core_terms("health_medical")) >= 6
+    assert len(batch_module.stable_core_terms("work_study")) >= 6
+
+
+def test_load_words_by_scene_caps_focus_replaceables_and_blocks_places() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        replaceable_path = root / "replaceable_lexicon.jsonl"
+        rows = []
+        for idx in range(20):
+            rows.append(
+                {
+                    "wz_word": f"名词{idx:02d}",
+                    "mandarin_headword": f"名词{idx:02d}",
+                    "definition": f"家里名词{idx:02d}",
+                    "semantic_class": "noun",
+                    "slot_kind": "noun",
+                    "primary_scene_id": "home_life",
+                }
+            )
+        for idx in range(20):
+            rows.append(
+                {
+                    "wz_word": f"动作{idx:02d}",
+                    "mandarin_headword": f"动作{idx:02d}",
+                    "definition": f"家里动作{idx:02d}",
+                    "semantic_class": "action",
+                    "slot_kind": "verb",
+                    "primary_scene_id": "home_life",
+                }
+            )
+        for idx in range(20):
+            rows.append(
+                {
+                    "wz_word": f"设备{idx:02d}",
+                    "mandarin_headword": f"设备{idx:02d}",
+                    "definition": f"家里设备{idx:02d}",
+                    "semantic_class": "device",
+                    "slot_kind": "noun",
+                    "primary_scene_id": "home_life",
+                }
+            )
+        for idx in range(6):
+            rows.append(
+                {
+                    "wz_word": f"地名{idx:02d}",
+                    "mandarin_headword": f"地名{idx:02d}",
+                    "definition": f"地点{idx:02d}",
+                    "semantic_class": "place",
+                    "slot_kind": "place",
+                    "primary_scene_id": "home_life",
+                }
+            )
+        replaceable_path.write_text(
+            "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+            encoding="utf-8",
+        )
+
+        originals = {
+            "REPLACEABLE_LEXICON": batch_module.REPLACEABLE_LEXICON,
+            "DENSE_WHITELIST": batch_module.DENSE_WHITELIST,
+            "load_modern_words_from_assets": batch_module.load_modern_words_from_assets,
+            "choose_scene_for_word": batch_module.choose_scene_for_word,
+            "expand_scene_targets": batch_module.expand_scene_targets,
+        }
+        try:
+            batch_module.REPLACEABLE_LEXICON = replaceable_path
+            batch_module.DENSE_WHITELIST = root / "missing_dense.jsonl"
+            batch_module.load_modern_words_from_assets = lambda by_scene, seen: None
+            batch_module.choose_scene_for_word = lambda row: "home_life"
+            batch_module.expand_scene_targets = lambda scene_ids, *texts, expand_digital=False: [str(scene_ids[0])]
+
+            words_by_scene = batch_module.load_words_by_scene()
+        finally:
+            for name, value in originals.items():
+                setattr(batch_module, name, value)
+
+        replaceable_words = [
+            row
+            for row in words_by_scene["home_life"]
+            if row.get("source_type") == "replaceable_lexicon"
+        ]
+        category_counts = Counter(
+            batch_module.normalized_focus_replaceable_category(row)
+            for row in replaceable_words
+        )
+
+        assert len(replaceable_words) == 36
+        assert category_counts["noun"] == 12
+        assert category_counts["action"] == 12
+        assert category_counts["device"] == 12
+        assert all(row.get("slot_kind") != "place" for row in replaceable_words)
+
+
+def test_create_tasks_balanced_spreads_core_usage_within_scene_cap() -> None:
+    scene_id = "home_life"
+    examples_by_scene = {
+        scene_id: [
+            _example("大蛮阵", "家里阵仗大", scene_id, "屋里大蛮阵还未收拾停当。", "家里东西很多还没收拾好。"),
+            _example("整理", "整理家里", scene_id, "你先整理桌面再出去。", "你先整理桌面再出去。"),
+            _example("收拾", "收拾屋里", scene_id, "阿妈催我收拾房间。", "妈妈催我收拾房间。"),
+            _example("晾起", "晾衣服起来", scene_id, "阳台里个衫裤快晾起。", "阳台里的衣服快晾起来。"),
+            _example("冰箱", "家用冰箱", scene_id, "冰箱里还搁牢菜。", "冰箱里还放着菜。"),
+            _example("空调", "家里空调", scene_id, "夜里空调莫开太冷。", "晚上空调别开太冷。"),
+            _example("洗衣机", "家用洗衣机", scene_id, "洗衣机还勒转个。", "洗衣机还在转。"),
+            _example("路由器", "家里路由器", scene_id, "路由器断电脱再插起。", "路由器断电后再插上。"),
+        ]
+    }
+    words_by_scene = {
+        scene_id: [
+            _word("大蛮阵", "家里阵仗大", scene_id),
+            _word("整理", "整理家里", scene_id, semantic_class="action", slot_kind="verb"),
+            _word("收拾", "收拾屋里", scene_id, semantic_class="action", slot_kind="verb"),
+            _word("晾起", "晾衣服起来", scene_id, semantic_class="action", slot_kind="verb"),
+            _word("冰箱", "家用冰箱", scene_id, semantic_class="device"),
+            _word("空调", "家里空调", scene_id, semantic_class="device"),
+            _word("洗衣机", "家用洗衣机", scene_id, semantic_class="device"),
+            _word("路由器", "家里路由器", scene_id, semantic_class="device"),
+            _word("阳台", "家里阳台", scene_id),
+            _word("厨房", "家里厨房", scene_id),
+            _word("书房", "家里书房", scene_id),
+            _word("热水器", "家里热水器", scene_id, semantic_class="device"),
+        ]
+    }
+
+    originals = {
+        "core_is_allowed": batch_module.core_is_allowed,
+        "core_is_blocked": batch_module.core_is_blocked,
+        "word_looks_usable": batch_module.word_looks_usable,
+        "example_looks_usable": batch_module.example_looks_usable,
+        "core_word_looks_usable": batch_module.core_word_looks_usable,
+        "scene_match_score": batch_module.scene_match_score,
+        "build_domain_context": batch_module.build_domain_context,
+    }
+    try:
+        batch_module.core_is_allowed = lambda scene_id, wz_word: True
+        batch_module.core_is_blocked = lambda scene_id, wz_word, definition, source_file="": False
+        batch_module.word_looks_usable = lambda word: True
+        batch_module.example_looks_usable = lambda example: True
+        batch_module.core_word_looks_usable = lambda word, scene_id, anchor=None: True
+        batch_module.scene_match_score = lambda scene_id, *texts: 1 if any(texts) else 0
+        batch_module.build_domain_context = lambda domain_ids, scene_id: {
+            "domain_ids": [],
+            "domain_labels": [],
+            "required_terms": [],
+            "preferred_terms": [],
+            "blocked_terms": [],
+            "prompt_notes": [],
+            "review_notes": [],
+        }
+
+        tasks = batch_module.create_tasks_balanced(
+            examples_by_scene=examples_by_scene,
+            words_by_scene=words_by_scene,
+            num_tasks=12,
+            seed=29,
+            scene_filter=[scene_id],
+        )
+    finally:
+        for name, value in originals.items():
+            setattr(batch_module, name, value)
+
+    core_counts = Counter(str(task.get("core_word") or "") for task in tasks)
+    assert len(tasks) == 12
+    assert len(core_counts) >= 4
+    assert core_counts.most_common(1)[0][1] <= 5
+
+
+def test_create_tasks_balanced_rotates_transport_place_supports() -> None:
+    scene_id = "transport_trip"
+    examples_by_scene = {
+        scene_id: [
+            _example("相伴", "一起同行", scene_id, "你伉我相伴去车站大道。", "你陪我一起去车站大道。"),
+            _example("导航", "手机导航", scene_id, "导航讲还要转一道。", "导航说还要再转一次。"),
+            _example("换乘", "中途换乘", scene_id, "今朝换乘两趟车。", "今天换乘两趟车。"),
+            _example("打车", "叫车出门", scene_id, "雨落大就打车去。", "雨下大就打车去。"),
+            _example("地铁", "搭地铁", scene_id, "地铁一站一站慢慢到。", "地铁一站一站慢慢到。"),
+            _example("高铁", "坐高铁", scene_id, "高铁票今朝先看起。", "高铁票今天先看起来。"),
+            _example("共享单车", "扫码骑车", scene_id, "共享单车扫起就行。", "共享单车扫码就可以。"),
+            _example("网约车", "手机约车", scene_id, "网约车讲两分钟到。", "网约车说两分钟到。"),
+        ]
+    }
+    words_by_scene = {
+        scene_id: [
+            _word("相伴", "一起同行", scene_id),
+            _word("导航", "手机导航", scene_id, semantic_class="transport"),
+            _word("换乘", "中途换乘", scene_id, semantic_class="transport"),
+            _word("打车", "叫车出门", scene_id, semantic_class="transport"),
+            _word("地铁", "搭地铁", scene_id, semantic_class="transport"),
+            _word("高铁", "坐高铁", scene_id, semantic_class="transport"),
+            _word("共享单车", "扫码骑车", scene_id, semantic_class="transport"),
+            _word("网约车", "手机约车", scene_id, semantic_class="transport"),
+            _word("车站大道", "地点名词", scene_id, semantic_class="place", slot_kind="place", source_type="place_name", modern_priority=3),
+            _word("高铁站", "地点名词", scene_id, semantic_class="place", slot_kind="place", source_type="place_name", modern_priority=3),
+            _word("地铁站", "地点名词", scene_id, semantic_class="place", slot_kind="place", source_type="place_name", modern_priority=3),
+            _word("机场路", "地点名词", scene_id, semantic_class="place", slot_kind="place", source_type="place_name", modern_priority=3),
+            _word("南塘街", "地点名词", scene_id, semantic_class="place", slot_kind="place", source_type="place_name", modern_priority=3),
+            _word("瓯海大道", "地点名词", scene_id, semantic_class="place", slot_kind="place", source_type="place_name", modern_priority=3),
+            _word("新城站", "地点名词", scene_id, semantic_class="place", slot_kind="place", source_type="place_name", modern_priority=3),
+            _word("蒲鞋市", "地点名词", scene_id, semantic_class="place", slot_kind="place", source_type="place_name", modern_priority=3),
+            _word("学院路", "地点名词", scene_id, semantic_class="place", slot_kind="place", source_type="place_name", modern_priority=3),
+            _word("梧田站", "地点名词", scene_id, semantic_class="place", slot_kind="place", source_type="place_name", modern_priority=3),
+            _word("车票", "车票", scene_id, semantic_class="noun"),
+            _word("行李", "出门行李", scene_id, semantic_class="noun"),
+        ]
+    }
+
+    originals = {
+        "core_is_allowed": batch_module.core_is_allowed,
+        "core_is_blocked": batch_module.core_is_blocked,
+        "word_looks_usable": batch_module.word_looks_usable,
+        "example_looks_usable": batch_module.example_looks_usable,
+        "core_word_looks_usable": batch_module.core_word_looks_usable,
+        "scene_match_score": batch_module.scene_match_score,
+        "build_domain_context": batch_module.build_domain_context,
+    }
+    try:
+        batch_module.core_is_allowed = lambda scene_id, wz_word: True
+        batch_module.core_is_blocked = lambda scene_id, wz_word, definition, source_file="": False
+        batch_module.word_looks_usable = lambda word: True
+        batch_module.example_looks_usable = lambda example: True
+        batch_module.core_word_looks_usable = lambda word, scene_id, anchor=None: True
+        batch_module.scene_match_score = lambda scene_id, *texts: 1 if any(texts) else 0
+        batch_module.build_domain_context = lambda domain_ids, scene_id: {
+            "domain_ids": [],
+            "domain_labels": [],
+            "required_terms": [],
+            "preferred_terms": [],
+            "blocked_terms": [],
+            "prompt_notes": [],
+            "review_notes": [],
+        }
+
+        tasks = batch_module.create_tasks_balanced(
+            examples_by_scene=examples_by_scene,
+            words_by_scene=words_by_scene,
+            num_tasks=20,
+            seed=41,
+            scene_filter=[scene_id],
+        )
+    finally:
+        for name, value in originals.items():
+            setattr(batch_module, name, value)
+
+    lexical_summary = batch_module.summarize_task_lexical_diversity(tasks)
+    place_counts = lexical_summary["scene_place_support_task_counts"][scene_id]
+
+    assert len(tasks) == 20
+    assert sum(place_counts.values()) >= 10
+    assert len(place_counts) >= 8
+    assert max(place_counts.values()) <= 3

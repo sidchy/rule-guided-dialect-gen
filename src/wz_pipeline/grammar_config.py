@@ -162,3 +162,24 @@ def compiled_modal_before_completion_pattern() -> re.Pattern[str] | None:
     payload = load_grammar_config().get("modal_verbs_before_completion") or {}
     pattern = str(payload.get("pattern") or "").strip()
     return re.compile(pattern) if pattern else None
+
+
+DEFAULT_SPEECH_ACT_TYPES: list[dict[str, str]] = [
+    {"id": "question", "label": "提问/确认", "hint": "用疑问句式，如反问、选择问、确认问（...啊？/...罢？/...未？）"},
+    {"id": "complaint", "label": "抱怨/吐槽", "hint": "表达不满、嫌弃、无奈，带情绪口吻"},
+    {"id": "request", "label": "请求/催促", "hint": "求助、催人做事、提醒别人注意"},
+    {"id": "narration", "label": "叙述/转述", "hint": "讲一件刚发生或正在发生的事，像在跟朋友说事情经过"},
+    {"id": "evaluation", "label": "评价/感叹", "hint": "对某事发表看法或感叹，带主观感受"},
+]
+
+
+def load_speech_act_types() -> list[dict[str, str]]:
+    """Load speech act types from grammar config, falling back to defaults."""
+    acts = load_grammar_config().get("speech_act_types")
+    if acts and isinstance(acts, list) and len(acts) >= 3:
+        return [
+            {"id": str(a.get("id", "")), "label": str(a.get("label", "")), "hint": str(a.get("hint", ""))}
+            for a in acts
+            if isinstance(a, dict) and a.get("id")
+        ]
+    return DEFAULT_SPEECH_ACT_TYPES
