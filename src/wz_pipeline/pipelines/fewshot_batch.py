@@ -1574,9 +1574,6 @@ def select_core_and_support_words(
         if chosen_place is not None:
             support_words.append(chosen_place)
             seen_words.add(str(chosen_place.get("wz_word") or "").strip())
-        elif place_candidates:
-            support_words.append(place_candidates[0])
-            seen_words.add(str(place_candidates[0].get("wz_word") or "").strip())
 
     while len(support_words) < max_support:
         remaining_candidates = [

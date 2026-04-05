@@ -463,14 +463,27 @@ def test_expand_scene_targets_splits_digital_chat_into_subscenes() -> None:
     assert "digital_app_operation" in targets
 
 
-def test_stable_core_policy_expanded_for_mainline_scenes() -> None:
-    assert len(batch_module.stable_core_terms("home_life")) >= 8
-    assert len(batch_module.stable_core_terms("transport_trip")) >= 8
-    assert len(batch_module.stable_core_terms("shopping_payment")) >= 8
-    assert len(batch_module.stable_core_terms("weather_safety")) >= 8
-    assert len(batch_module.stable_core_terms("food_dining")) >= 6
-    assert len(batch_module.stable_core_terms("health_medical")) >= 6
-    assert len(batch_module.stable_core_terms("work_study")) >= 6
+def test_stable_core_terms_follow_runtime_policy() -> None:
+    original_core_policy = batch_module.CORE_POLICY
+    try:
+        batch_module.CORE_POLICY = {
+            "global": {},
+            "scene_policies": {
+                "home_life": {
+                    "stable_core_terms": ["整理", "收拾", "路由器"],
+                },
+                "digital_chat": {
+                    "allow_terms": ["提醒", "翻译"],
+                },
+            },
+        }
+
+        assert batch_module.stable_core_terms("home_life") == {"整理", "收拾", "路由器"}
+        assert batch_module.stable_core_terms("digital_ai_assistant") == {"提醒", "翻译"}
+        assert batch_module.core_is_allowed("digital_ai_assistant", "提醒") is True
+        assert batch_module.core_is_allowed("digital_ai_assistant", "未知") is False
+    finally:
+        batch_module.CORE_POLICY = original_core_policy
 
 
 def test_load_words_by_scene_caps_focus_replaceables_and_blocks_places() -> None:
@@ -684,6 +697,9 @@ def test_create_tasks_balanced_rotates_transport_place_supports() -> None:
         "core_word_looks_usable": batch_module.core_word_looks_usable,
         "scene_match_score": batch_module.scene_match_score,
         "build_domain_context": batch_module.build_domain_context,
+        "PLACE_SUPPORT_RATIO": batch_module.PLACE_SUPPORT_RATIO,
+        "PLACE_SUPPORT_CAP_RATIO": batch_module.PLACE_SUPPORT_CAP_RATIO,
+        "SCENE_SUPPORT_POOL_SIZES": dict(batch_module.SCENE_SUPPORT_POOL_SIZES),
     }
     try:
         batch_module.core_is_allowed = lambda scene_id, wz_word: True
@@ -701,6 +717,9 @@ def test_create_tasks_balanced_rotates_transport_place_supports() -> None:
             "prompt_notes": [],
             "review_notes": [],
         }
+        batch_module.PLACE_SUPPORT_RATIO = 1.0
+        batch_module.PLACE_SUPPORT_CAP_RATIO = 0.10
+        batch_module.SCENE_SUPPORT_POOL_SIZES["transport_trip"] = 20
 
         tasks = batch_module.create_tasks_balanced(
             examples_by_scene=examples_by_scene,
