@@ -401,8 +401,8 @@ def test_prompt_examples_for_task_dedupes_same_skeleton_examples() -> None:
     prompt_examples, contaminated = batch_module.prompt_examples_for_task(
         "shopping_payment", examples, set()
     )
-    assert contaminated is False
-    assert len(prompt_examples) == 1
+    assert contaminated is True
+    assert prompt_examples == []
 
 
 def test_dedupe_generated_candidates_limits_and_collapses_same_skeleton() -> None:
@@ -414,13 +414,31 @@ def test_dedupe_generated_candidates_limits_and_collapses_same_skeleton() -> Non
     ]
     deduped = batch_module.dedupe_generated_candidates(
         candidates,
+        scene_id="shopping_payment",
         core_word="合着",
         support_words=["五十番钿"],
         approved_modern_terms=[],
     )
     assert len(deduped) <= batch_module.GENERATED_SENTENCE_LIMIT
-    assert deduped[0]["wz"] == "该件衣裳五十番钿买来，真合着显。"
+    assert "该件衣裳五十番钿买来，真合着显。" not in {row["wz"] for row in deduped}
     assert "该件衣裳一百番钿买来，真合着显。" not in {row["wz"] for row in deduped}
+    assert "该件衣裳两百番钿买来，真合着。" in {row["wz"] for row in deduped}
+
+
+def test_dedupe_generated_candidates_filters_recovery_repeaters() -> None:
+    candidates = [
+        {"wz": "屋里大蛮阵，一日个行用也交关多，真难熬。", "zh": "家里人多，一天的开销很多，真难熬。"},
+        {"wz": "天色恁好，有太阳，我走外转嬉嬉。", "zh": "天气很好，有太阳，我出去玩玩。"},
+        {"wz": "我伉你相伴走车站大道，你𧟰愁寻不着路。", "zh": "我陪你走车站大道，你不用怕找不到路。"},
+    ]
+    deduped = batch_module.dedupe_generated_candidates(
+        candidates,
+        scene_id="transport_trip",
+        core_word="相伴",
+        support_words=["车站大道"],
+        approved_modern_terms=[],
+    )
+    assert [row["wz"] for row in deduped] == ["我伉你相伴走车站大道，你𧟰愁寻不着路。"]
 
 
 def test_validate_sentence_flags_global_explicit_block_terms() -> None:

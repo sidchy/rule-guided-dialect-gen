@@ -355,9 +355,19 @@ def example_mentions_terms(example: dict[str, Any], terms: set[str]) -> bool:
 RECOVERY_PROMPT_BAD_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"爻罢"),
     re.compile(r"(?:困难显(?:显)?|难寻显(?:罢)?|好走显(?:罢)?|好嬉显(?:罢)?|暖显(?:罢)?|熟显(?:罢)?|吃力显(?:罢)?|满显(?:罢)?)"),
+    re.compile(r"(?:合着显(?:罢)?|合着爻罢)"),
+    re.compile(r"交关"),
+    re.compile(r"嬉嬉"),
+    re.compile(r"(?:点|洗|用|寻|焯菜)爻罢"),
     re.compile(r"(?:走|吃|做)起(?:[，,。！？!?]|$)"),
     re.compile(r"个地方"),
     re.compile(r"(?:相伴走.{0,8}嬉|走出嬉)"),
+)
+RECOVERY_GENERATED_BAD_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?:合着显(?:罢)?|合着爻罢)"),
+    re.compile(r"交关"),
+    re.compile(r"嬉嬉"),
+    re.compile(r"(?:点|洗|用|寻|焯菜)爻罢"),
 )
 PROMPT_EXAMPLE_LIMIT = 3
 GENERATED_SENTENCE_LIMIT = 3
@@ -372,7 +382,24 @@ def example_looks_prompt_safe(example: dict[str, Any], scene_id: str) -> bool:
         return False
     if any(pattern.search(sentence) for pattern in RECOVERY_PROMPT_BAD_PATTERNS):
         return False
-    if scene_id == "transport_trip" and "嬉" in sentence:
+    if scene_id in {"transport_trip", "weather_safety"} and "嬉" in sentence:
+        return False
+    return True
+
+
+def generated_candidate_looks_recovery_safe(sentence: str, scene_id: str, core_word: str) -> bool:
+    sentence = clean_wz(sentence)
+    if not sentence:
+        return False
+    if any(pattern.search(sentence) for pattern in RECOVERY_GENERATED_BAD_PATTERNS):
+        return False
+    if scene_id in {"transport_trip", "weather_safety"} and "嬉" in sentence:
+        return False
+    if core_word == "相伴" and re.search(r"相伴.{0,8}(?:嬉|寻爻罢)", sentence):
+        return False
+    if core_word == "大蛮阵" and "交关" in sentence:
+        return False
+    if core_word == "合着" and re.search(r"合着(?:显(?:罢)?|爻罢)", sentence):
         return False
     return True
 
@@ -409,6 +436,7 @@ def example_pattern_signature(example: dict[str, Any]) -> str:
 def dedupe_generated_candidates(
     candidates: list[dict[str, Any]],
     *,
+    scene_id: str,
     core_word: str,
     support_words: list[str],
     approved_modern_terms: list[str] | None = None,
@@ -418,6 +446,8 @@ def dedupe_generated_candidates(
     for candidate in candidates:
         wz = clean_wz(str(candidate.get("wz") or ""))
         if not wz:
+            continue
+        if not generated_candidate_looks_recovery_safe(wz, scene_id, core_word):
             continue
         signature = sentence_skeleton_signature(
             wz,
@@ -465,6 +495,21 @@ def prompt_examples_for_task(
         # If we cannot form a clean prompt block, prefer no examples over contaminated ones.
         return [], contaminated
     return [], contaminated
+
+
+def recovery_task_note(scene_id: str, core_word: str) -> str:
+    notes: list[str] = []
+    if core_word == "合着":
+        notes.append("讲价钱或划算时优先朴素说法，如 `真合着`，不要写 `合着显` 或 `合着爻罢`。")
+    if core_word in {"外卖", "焯菜"}:
+        notes.append("不要把完成尾巴机械套成 `点爻罢`、`焯菜爻罢`。")
+    if core_word == "相伴":
+        notes.append("`相伴` 只用来陪人走、陪人寻路，不要搭 `嬉`，也不要写 `相伴寻爻罢`。")
+    if scene_id == "weather_safety":
+        notes.append("天气安全场景优先写避雨、著埭屋里、小心准备，不要写 `嬉` 或 `嬉嬉`。")
+    if core_word == "大蛮阵":
+        notes.append("讲家里人多或开销重时，优先朴素说法，不要写 `交关`。")
+    return "\n".join(f"  - {note}" for note in notes)
 
 
 # ===================== DATA LOADING =====================
@@ -1307,6 +1352,7 @@ def build_task(
     ) or "  - 无"
     domain_notes = domain_context.get("prompt_notes") or []
     domain_note_block = "\n".join(f"  - {note}" for note in domain_notes) or "  - 无"
+    recovery_note_block = recovery_task_note(scene_id, str(core_word.get("wz_word") or ""))
     contamination_note = ""
     if examples_contaminated:
         contamination_note = "\n注意：旧材料里有过时说法，只学句式，不要复用旧词。"
@@ -1336,6 +1382,9 @@ def build_task(
 
 领域补充说明：
 {domain_note_block}
+
+恢复线补充提醒：
+{recovery_note_block or "  - 无"}
 
 请额外遵守这些{DIALECT_NAME}语法约束：
 {grammar_user_rules}
@@ -1681,6 +1730,7 @@ def request_generation(client, model, task):
             return []
         return dedupe_generated_candidates(
             sentences,
+            scene_id=str(task.get("scene_id") or ""),
             core_word=str(task.get("core_word") or ""),
             support_words=list(task.get("support_words") or []),
             approved_modern_terms=list(task.get("approved_modern_terms") or []),
