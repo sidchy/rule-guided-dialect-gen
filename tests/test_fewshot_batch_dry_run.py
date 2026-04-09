@@ -310,3 +310,134 @@ def test_fewshot_batch_offline_dry_runs_cover_baseline_domain_and_feedback() -> 
         assert "failure_analysis" in feedback_summary["machine_metrics"]
         assert feedback_summary["machine_metrics"]["rule_pass_count"] > 0
         assert len(registered_runs) == 3
+
+
+def test_word_looks_usable_respects_runtime_blocklists() -> None:
+    assert not batch_module.word_looks_usable({"wz_word": "一时一刻", "definition": "一会儿"})
+    assert not batch_module.word_looks_usable({"wz_word": "挤皁", "definition": "挤压皂液"})
+    assert not batch_module.word_looks_usable(
+        {"wz_word": "物事", "definition": "东西", "source_file": "活色生香温州话.xlsx"}
+    )
+
+
+def test_example_looks_usable_respects_runtime_blocklists() -> None:
+    assert not batch_module.example_looks_usable(
+        {"wz_word": "洞洞丝儿", "definition": "裂开小洞", "source_file": "test.jsonl"}
+    )
+    assert batch_module.example_looks_usable(
+        {"wz_word": "物事", "definition": "东西", "source_file": "test.jsonl"}
+    )
+
+
+def test_core_is_blocked_respects_runtime_blocklists() -> None:
+    assert batch_module.core_is_blocked("shopping_payment", "百来番钿", "金额说法")
+    assert batch_module.core_is_blocked("home_life", "物事", "东西", "活色生香温州话.xlsx")
+
+
+def test_prompt_examples_for_task_filters_recovery_bad_skeletons() -> None:
+    examples = [
+        {
+            "wz_word": "相伴",
+            "definition": "一起走",
+            "scene_id": "transport_trip",
+            "wz_sentence": "我伉你相伴走，该地方好嬉显罢。",
+            "zh_sentence": "我陪你一起走，这个地方很好玩。",
+            "source_file": "test.jsonl",
+        },
+        {
+            "wz_word": "相伴",
+            "definition": "一起走",
+            "scene_id": "transport_trip",
+            "wz_sentence": "你𧟰愁寻不着，我伉你相伴走。",
+            "zh_sentence": "你怕找不到，我陪你一起走。",
+            "source_file": "test.jsonl",
+        },
+    ]
+    prompt_examples, contaminated = batch_module.prompt_examples_for_task(
+        "transport_trip", examples, set()
+    )
+    assert contaminated is True
+    assert len(prompt_examples) == 1
+    assert prompt_examples[0]["wz_sentence"] == "你𧟰愁寻不着，我伉你相伴走。"
+
+
+def test_prompt_examples_for_task_prefers_empty_over_contaminated_examples() -> None:
+    examples = [
+        {
+            "wz_word": "相伴",
+            "definition": "一起走",
+            "scene_id": "transport_trip",
+            "wz_sentence": "我伉你相伴走，该地方好嬉显罢。",
+            "zh_sentence": "我陪你一起走，这个地方很好玩。",
+            "source_file": "test.jsonl",
+        }
+    ]
+    prompt_examples, contaminated = batch_module.prompt_examples_for_task(
+        "transport_trip", examples, set()
+    )
+    assert contaminated is True
+    assert prompt_examples == []
+
+
+def test_prompt_examples_for_task_dedupes_same_skeleton_examples() -> None:
+    examples = [
+        {
+            "wz_word": "合着",
+            "definition": "划算",
+            "scene_id": "shopping_payment",
+            "wz_sentence": "该件衣裳五十番钿买来，真合着显。",
+            "zh_sentence": "这件衣服五十块买来，很划算。",
+            "source_file": "test.jsonl",
+        },
+        {
+            "wz_word": "合着",
+            "definition": "划算",
+            "scene_id": "shopping_payment",
+            "wz_sentence": "该件衣裳一百番钿买来，真合着显。",
+            "zh_sentence": "这件衣服一百块买来，很划算。",
+            "source_file": "test.jsonl",
+        },
+    ]
+    prompt_examples, contaminated = batch_module.prompt_examples_for_task(
+        "shopping_payment", examples, set()
+    )
+    assert contaminated is False
+    assert len(prompt_examples) == 1
+
+
+def test_dedupe_generated_candidates_limits_and_collapses_same_skeleton() -> None:
+    candidates = [
+        {"wz": "该件衣裳五十番钿买来，真合着显。", "zh": "这件衣服五十块买来，很划算。"},
+        {"wz": "该件衣裳一百番钿买来，真合着显。", "zh": "这件衣服一百块买来，很划算。"},
+        {"wz": "你买恁多物事，五十番钿合着不？", "zh": "你买这么多东西，五十块划算吗？"},
+        {"wz": "该件衣裳两百番钿买来，真合着。", "zh": "这件衣服两百块买来，很划算。"},
+    ]
+    deduped = batch_module.dedupe_generated_candidates(
+        candidates,
+        core_word="合着",
+        support_words=["五十番钿"],
+        approved_modern_terms=[],
+    )
+    assert len(deduped) <= batch_module.GENERATED_SENTENCE_LIMIT
+    assert deduped[0]["wz"] == "该件衣裳五十番钿买来，真合着显。"
+    assert "该件衣裳一百番钿买来，真合着显。" not in {row["wz"] for row in deduped}
+
+
+def test_validate_sentence_flags_global_explicit_block_terms() -> None:
+    val = batch_module.validate_sentence(
+        "我未吃饭，肚饿起罢，赶紧煮饭。",
+        "我还没吃饭，肚子饿了，赶紧做饭。",
+        {"我", "未", "吃饭", "煮饭"},
+        "吃饭",
+        [],
+        set(),
+        scene_id="food_dining",
+        lane="mainline",
+        core_tier="stable",
+        approved_modern_terms=[],
+        banned_terms=[],
+        domain_required_terms=[],
+        domain_preferred_terms=[],
+        domain_blocked_terms=[],
+    )
+    assert "banned_terms:赶紧" in val["reasons"]

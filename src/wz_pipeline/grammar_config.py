@@ -13,7 +13,7 @@ from .paths import GRAMMAR_RULES_PATH
 
 WENZHOU_LEGACY_GRAMMAR_CONFIG: dict[str, Any] = {
     "review_markers": ["爻", "罢", "著埭", "落去", "未", "冇", "不"],
-    "repair_trigger_pattern": "(爻|罢|著埭|落去|起罢|啊不|啊未|啊冇|未|冇)",
+    "repair_trigger_pattern": "(爻|罢|著埭|落去|吃起|做起|走起|写起|讲起|用起|显|阿是|訾那沃|啊不|啊未|啊冇|未|冇)",
     "completion_marker": "爻",
     "allowed_after_completion": "罢，。！？；,.!?;、再就还也阿沃个",
     "max_completion_count": 1,
@@ -55,6 +55,76 @@ WENZHOU_LEGACY_GRAMMAR_CONFIG: dict[str, Any] = {
             "pattern": "高头",
             "description": "混入北部吴语常见词形",
         },
+        {
+            "name": "northern_wu_lexeme_jiaoguan",
+            "pattern": "交关",
+            "description": "混入北部吴语常见词形",
+        },
+        {
+            "name": "ba_after_request_marker",
+            "pattern": "(?:快俫|快点|覅再|着紧|妆紧|趁热|快走|走归|先).{0,10}罢(?:[？?！!。.]|$)",
+            "description": "罢 不用于尚未发生的请求/命令或提醒动作",
+        },
+        {
+            "name": "ba_clause_chain_after_completion",
+            "pattern": "爻罢[，,].{0,8}(?:等|再|就|然后)",
+            "description": "爻罢 不宜直接挂接下一分句，应用更稳妥的已然表达",
+        },
+        {
+            "name": "future_start_marker_after_modal",
+            "pattern": "(?:想|要|会|會|打算|准备|準備).{0,10}(?:吃起|做起|走起|写起|讲起|读起|用起|开起)(?:[？?！!。.]|$)",
+            "description": "未发生事件不宜直接把 起 当成起始体结果收尾",
+        },
+        {
+            "name": "future_continuative_marker_after_modal",
+            "pattern": "(?:想|要|会|會|打算|准备|準備).{0,10}(?:做落去|走落去|开落去|卖落去|吃落去|用落去)(?:[？?！!。.]|$)",
+            "description": "未发生事件不宜直接把 落去 当成继续体结果收尾",
+        },
+        {
+            "name": "ba_realis_misuse",
+            "pattern": "(?:(?:着|要|会|會|应该|應該|打算|准备|準備).{0,10}罢(?:[？?！!。.]|$)|(?:走归|走出).{0,4}罢(?:[？?！!。.]|$))",
+            "description": "罢 只用于事件已成立；提醒、计划、将来动作后不裸加 罢",
+        },
+        {
+            "name": "subjective_emotion_xianxian",
+            "pattern": "(?:我|阿拉|我个|自家).{0,3}(?:急|烦|烦闷|心焦|心烦|担心)显(?:急|烦|烦闷|心焦|心烦|担心)",
+            "description": "自身主观情感默认不用 X显X",
+        },
+        {
+            "name": "bare_xian_degree",
+            "pattern": "(?:困难显(?:显)?|着急显|心焦显|心烦显|麻烦显|难寻显(?:罢)?|好走显(?:罢)?|方便显(?:罢)?|熟显(?:罢)?)(?:[？?！!。.]|$)",
+            "description": "X显 不能粗放裸收尾，优先改成更完整稳妥的程度表达",
+        },
+        {
+            "name": "bare_start_marker_qi",
+            "pattern": "(?:走起|吃起|做起)(?:[，,。！？]|$)",
+            "description": "起 不作粗放句末骨架，优先改成更稳妥的起始或动作表达",
+        },
+        {
+            "name": "completion_ba_motion_or_setup",
+            "pattern": "(?:走爻罢|开爻罢|叫爻罢|焯菜爻罢|寻著爻罢)(?:[？?！!。]|$|[，,])",
+            "description": "机械式 V爻罢 组合不稳，优先改成更自然的完成/已然表达",
+        },
+        {
+            "name": "a_shi_template_drift",
+            "pattern": "(?<!是)阿是",
+            "description": "阿是 不作自由疑问骨架；只有明确 yes/no alternative 才写 是阿是",
+        },
+        {
+            "name": "wo_used_for_scalar_also",
+            "pattern": "(?:我|你|渠|伊|阿拉|俫|人家).{0,3}沃(?:还|先|就|才|已经|已)",
+            "description": "沃 主要管全称量化；标量或让步语境优先用 阿",
+        },
+        {
+            "name": "a_used_for_quantificational_all",
+            "pattern": "(?:这些|这些个|大家|人人|逐个|全部|都个).{0,4}阿(?:还|都|会|要|已经|已)",
+            "description": "全体/总括义优先用 沃，不把 quantificational all 写成 阿",
+        },
+        {
+            "name": "choice_question_template",
+            "pattern": "(?:是阿是.{0,8}听底罢(?!阿未)|眙着未(?:[？?！!。.]|$)|足也未(?:[？?！!。.]|$))",
+            "description": "选择问句模板错误：优先用 V不V / V冇V / V罢阿未 / X也不X",
+        },
     ],
     "modal_verbs_before_completion": {
         "pattern": "(?:想|要|会|會|能|可以|应该|應該|打算|喜欢|曉得|晓得|觉得|覺得|认识|認識|希望|准备|準備|肯|敢)爻"
@@ -87,11 +157,25 @@ WENZHOU_LEGACY_GRAMMAR_CONFIG: dict[str, Any] = {
         "completion_marker_overused": ["### 3.1 完成体：`爻`"],
         "completion_followed_by_clause": ["### 3.1 完成体：`爻`"],
         "sentence_final_ba_overused": ["### 3.4 已然体：重读 `罢` 与句末轻读 `罢`"],
+        "ba_after_request_marker": ["### 3.4 已然体：重读 `罢` 与句末轻读 `罢`"],
+        "ba_clause_chain_after_completion": ["### 3.1 完成体：`爻`", "### 3.4 已然体：重读 `罢` 与句末轻读 `罢`"],
         "stative_progressive": ["### 3.2 进行体：`著埭 + V`"],
         "dynamic_postposed_zhedai": ["### 3.3 持续体：`V + 著埭`"],
         "qishi_object_order": ["### 3.5 起始体：`起`"],
         "continuative_object_order": ["### 3.6 继续体：`落去`"],
+        "future_start_marker_after_modal": ["### 3.5 起始体：`起`"],
+        "future_continuative_marker_after_modal": ["### 3.6 继续体：`落去`"],
+        "ba_realis_misuse": ["### 3.4 已然体：重读 `罢` 与句末轻读 `罢`"],
         "mandarin_negation": ["### 9.1 `不`", "### 9.2 `未`", "### 9.3 `冇` 的否定用法"],
+        "northern_wu_lexeme_jiaoguan": [],
+        "subjective_emotion_xianxian": [],
+        "bare_xian_degree": [],
+        "bare_start_marker_qi": ["### 3.5 起始体：`起`"],
+        "completion_ba_motion_or_setup": ["### 3.1 完成体：`爻`", "### 3.4 已然体：重读 `罢` 与句末轻读 `罢`"],
+        "a_shi_template_drift": [],
+        "wo_used_for_scalar_also": [],
+        "a_used_for_quantificational_all": [],
+        "choice_question_template": [],
     },
     "prompt_extra_notes": {
         "generation_user": [

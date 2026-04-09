@@ -141,6 +141,10 @@ archaic_definition_hints:
   - "旧俗"
   - "旧时"
   - "旧称"
+  - "旧指"
+  - "旧用"
+  - "旧谓"
+  - "旧时婚礼"
   - "古代"
   - "古时"
   - "旧式"
@@ -154,6 +158,31 @@ archaic_allowed_hints:
   - "今指"
   - "现在也指"
   - "现指"
+
+lexicon_block_terms:
+  - "一时一刻"
+  - "千年万日"
+  - "学堂搝"
+  - "吃大糖儿"
+  - "赶潮船"
+  - "放债夺利"
+  - "百来番钿"
+  - "洞洞丝儿"
+
+explicit_block_terms:
+  - "挤皁"
+  - "密密"
+  - "火油心"
+  - "侏儒"
+  - "眼灵珠"
+  - "鬼抽筋"
+  - "赶紧"
+  - "该下儿"
+  - "细儿"
+  - "交关"
+
+lexicon_block_source_files:
+  - "活色生香温州话.xlsx"
 
 abstract_time_hints:
   - "明后天"
@@ -247,10 +276,11 @@ scene_terms:
       - "一百番钿"
       - "两百番钿"
       - "几十番钿"
-      - "百来番钿"
+      - "百下番钿"
+      - "百落番钿"
     old_money_terms: ["银圆"]
     prompt_blocked_terms: ["银圆", "屋宕", "银行", "鸡卵"]
-    amount_terms: ["番钿", "十番钿", "五十番钿", "一百番钿", "两百番钿", "几十番钿", "百来番钿"]
+    amount_terms: ["番钿", "十番钿", "五十番钿", "一百番钿", "两百番钿", "几十番钿", "百下番钿", "百落番钿"]
     support_pool_size: 5
 
   transport_trip:

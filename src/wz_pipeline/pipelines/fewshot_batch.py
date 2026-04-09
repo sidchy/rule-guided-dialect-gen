@@ -90,6 +90,21 @@ ARCHAIC_DEFINITION_HINTS = tuple(DIALECT_SETTINGS.get("archaic_definition_hints"
     "旧俗", "旧时", "旧称", "古代", "古时", "旧式", "老式", "银圆", "酒筵", "传统木结构", "旧社会",
 ))
 ARCHAIC_ALLOWED_HINTS = tuple(DIALECT_SETTINGS.get("archaic_allowed_hints") or ("今指", "现在也指", "现指"))
+LEXICON_BLOCK_TERMS = {
+    str(term).strip()
+    for term in (DIALECT_SETTINGS.get("lexicon_block_terms") or [])
+    if str(term).strip()
+}
+EXPLICIT_BLOCK_TERMS = {
+    str(term).strip()
+    for term in (DIALECT_SETTINGS.get("explicit_block_terms") or [])
+    if str(term).strip()
+}
+LEXICON_BLOCK_SOURCE_FILES = tuple(
+    str(item).strip()
+    for item in (DIALECT_SETTINGS.get("lexicon_block_source_files") or [])
+    if str(item).strip()
+)
 ABSTRACT_TIME_HINTS = tuple(DIALECT_SETTINGS.get("abstract_time_hints") or (
     "明后天", "明天", "后天", "昨天", "今天", "以前", "以后", "现在", "刚才", "过去", "过些日子",
 ))
@@ -268,6 +283,17 @@ def has_sense_marker(text: str) -> bool:
     return any(marker in text for marker in ("(", ")", "（", "）"))
 
 
+def source_file_blocked(source_file: str) -> bool:
+    return bool(source_file and any(hint in source_file for hint in LEXICON_BLOCK_SOURCE_FILES))
+
+
+def lexicon_term_blocked(wz_word: str, source_file: str = "") -> bool:
+    clean = str(wz_word or "").strip()
+    if not clean:
+        return False
+    return clean in LEXICON_BLOCK_TERMS or clean in EXPLICIT_BLOCK_TERMS or source_file_blocked(source_file)
+
+
 def load_core_policy() -> dict[str, Any]:
     if not FEWSHOT_CORE_POLICY.exists():
         return {"global": {}, "scene_policies": {}}
@@ -326,6 +352,88 @@ def example_mentions_terms(example: dict[str, Any], terms: set[str]) -> bool:
     return any(term and any(term in haystack for haystack in haystacks) for term in terms)
 
 
+RECOVERY_PROMPT_BAD_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"爻罢"),
+    re.compile(r"(?:困难显(?:显)?|难寻显(?:罢)?|好走显(?:罢)?|好嬉显(?:罢)?|暖显(?:罢)?|熟显(?:罢)?|吃力显(?:罢)?|满显(?:罢)?)"),
+    re.compile(r"(?:走|吃|做)起(?:[，,。！？!?]|$)"),
+    re.compile(r"个地方"),
+    re.compile(r"(?:相伴走.{0,8}嬉|走出嬉)"),
+)
+PROMPT_EXAMPLE_LIMIT = 3
+GENERATED_SENTENCE_LIMIT = 3
+AMOUNT_SIGNATURE_RE = re.compile(r"[零〇一二两三四五六七八九十百千万几0-9]+番钿")
+NUMBER_SIGNATURE_RE = re.compile(r"[零〇一二两三四五六七八九十百千万几0-9]+")
+PRONOUN_SIGNATURE_RE = re.compile(r"(?:阿拉|卬你|我个|你个|渠个|我|你|渠|伊|俫)")
+
+
+def example_looks_prompt_safe(example: dict[str, Any], scene_id: str) -> bool:
+    sentence = clean_wz(str(example.get("wz_sentence") or ""))
+    if not sentence:
+        return False
+    if any(pattern.search(sentence) for pattern in RECOVERY_PROMPT_BAD_PATTERNS):
+        return False
+    if scene_id == "transport_trip" and "嬉" in sentence:
+        return False
+    return True
+
+
+def sentence_skeleton_signature(
+    text: str,
+    *,
+    core_word: str = "",
+    support_words: list[str] | None = None,
+    approved_modern_terms: list[str] | None = None,
+) -> str:
+    signature = clean_wz(text)
+    terms = {
+        str(core_word or "").strip(),
+        *(str(word).strip() for word in (support_words or [])),
+        *(str(word).strip() for word in (approved_modern_terms or [])),
+    }
+    for term in sorted((term for term in terms if term), key=len, reverse=True):
+        replacement = "<AMT>" if AMOUNT_SIGNATURE_RE.fullmatch(term) else "<W>"
+        signature = signature.replace(term, replacement)
+    signature = AMOUNT_SIGNATURE_RE.sub("<AMT>", signature)
+    signature = PRONOUN_SIGNATURE_RE.sub("<P>", signature)
+    signature = NUMBER_SIGNATURE_RE.sub("<N>", signature)
+    return signature
+
+
+def example_pattern_signature(example: dict[str, Any]) -> str:
+    return sentence_skeleton_signature(
+        str(example.get("wz_sentence") or ""),
+        core_word=str(example.get("wz_word") or ""),
+    )
+
+
+def dedupe_generated_candidates(
+    candidates: list[dict[str, Any]],
+    *,
+    core_word: str,
+    support_words: list[str],
+    approved_modern_terms: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    kept: list[dict[str, Any]] = []
+    seen_signatures: set[str] = set()
+    for candidate in candidates:
+        wz = clean_wz(str(candidate.get("wz") or ""))
+        if not wz:
+            continue
+        signature = sentence_skeleton_signature(
+            wz,
+            core_word=core_word,
+            support_words=support_words,
+            approved_modern_terms=approved_modern_terms,
+        )
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+        kept.append(candidate)
+        if len(kept) >= GENERATED_SENTENCE_LIMIT:
+            break
+    return kept
+
+
 def prompt_examples_for_task(
     scene_id: str,
     examples: list[dict[str, Any]],
@@ -336,14 +444,27 @@ def prompt_examples_for_task(
     blocked_terms = banned_terms
     if scene_id == "shopping_payment":
         blocked_terms = set(blocked_terms) | SHOPPING_PROMPT_BLOCKED_TERMS
-    clean_examples = [example for example in examples if not example_mentions_terms(example, blocked_terms)]
-    if len(clean_examples) >= 2:
-        return clean_examples[:4], False
+    clean_examples = [
+        example
+        for example in examples
+        if not example_mentions_terms(example, blocked_terms) and example_looks_prompt_safe(example, scene_id)
+    ]
+    contaminated = len(clean_examples) != len(examples)
+    unique_examples: list[dict[str, Any]] = []
+    seen_signatures: set[str] = set()
+    for example in clean_examples:
+        signature = example_pattern_signature(example)
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+        unique_examples.append(example)
+    if clean_examples:
+        return unique_examples[:PROMPT_EXAMPLE_LIMIT], contaminated
     if scene_id == "shopping_payment":
         # Old money terms in shopping examples strongly leak into generated output.
         # If we cannot form a clean prompt block, prefer no examples over contaminated ones.
-        return clean_examples[:1], len(clean_examples) != len(examples)
-    return examples[:4], False
+        return [], contaminated
+    return [], contaminated
 
 
 # ===================== DATA LOADING =====================
@@ -707,6 +828,8 @@ def core_is_blocked(
         return True
     if source_file and any(hint in source_file for hint in global_policy.get("deny_source_files", [])):
         return True
+    if lexicon_term_blocked(wz_word, source_file):
+        return True
     return False
 
 
@@ -774,9 +897,12 @@ def shared_char_count(left: str, right: str) -> int:
 def word_looks_usable(word: dict[str, Any]) -> bool:
     wz_word = str(word.get("wz_word") or "").strip()
     definition = str(word.get("definition") or "").strip()
+    source_file = str(word.get("source_file") or "").strip()
     if not wz_word or not definition:
         return False
     if has_sense_marker(wz_word):
+        return False
+    if lexicon_term_blocked(wz_word, source_file):
         return False
     if any(hint in definition for hint in BAD_DEFINITION_HINTS):
         return False
@@ -790,11 +916,14 @@ def word_looks_usable(word: dict[str, Any]) -> bool:
 def example_looks_usable(example: dict[str, Any]) -> bool:
     wz_word = str(example.get("wz_word") or "").strip()
     definition = str(example.get("definition") or "").strip()
+    source_file = str(example.get("source_file") or "").strip()
     if not wz_word or not definition:
         return False
     if len(wz_word) < 2 or len(wz_word) > 4:
         return False
     if has_sense_marker(wz_word):
+        return False
+    if lexicon_term_blocked(wz_word, source_file):
         return False
     if any(hint in definition for hint in BAD_DEFINITION_HINTS):
         return False
@@ -1131,13 +1260,15 @@ SYSTEM_PROMPT = f"""你是{DIALECT_NAME}句子生成器。你的任务是根据�
 4. 保持例句中展示的方言特征，但不要为了像方言而乱拼功能词
 5. 不要写成{STANDARD_LANGUAGE_LABEL}
 6. 每句要有完整的语义，适合语音训练朗读
-7. 生成 5 句，每句独立
+7. 生成 {GENERATED_SENTENCE_LIMIT} 句，每句独立
 8. 优先围绕核心词展开一个完整、日常的小情境，不要把不相关词硬拼进一句
 9. 如果辅助词是新事物、现代地点或设备名称，只在真正自然时带进去
 10. 如果任务里列了“禁止词汇”，即使参考例句里出现了也绝对不要复用
 11. 不要混入其他吴语区常见词形；只能跟参考例句、本地词表和给定词汇走，不会说就换成本地更稳的说法
 12. 功能词语法必须比“像不像方言”更优先；拿不准时，宁可少用 `爻 / 罢 / 著埭 / 起 / 落去`
 13. 不要自己发明新的两字到四字词；除给定词和参考例句能支持的说法外，拿不准就改写成来源里已有的稳妥表达
+14. 同样意思如果有朴素说法和花哨说法，优先选更朴素、更短依赖的说法，不要为追求方言味乱加 `显 / 罢 / 个 / 渠 / 俫`
+15. 不要机械套用这些粗糙骨架：`X显`、`X显罢`、`V爻罢`、裸 `走起 / 吃起 / 做起`、`个地方`、`相伴走...嬉`
 """ + "\n\n" + build_generation_grammar_prompt_rules() + f"\n\n只输出 JSON：\n" + f'{{"sentences": [{{"wz": "{DIALECT_NAME}句子", "zh": "{STANDARD_LANGUAGE_LABEL}翻译"}}]}}'
 
 def build_task(
@@ -1162,7 +1293,7 @@ def build_task(
     example_block = "\n".join(
         f"  {i+1}. {DIALECT_NAME}：{ex['wz_sentence']}\n     {STANDARD_LANGUAGE_LABEL}：{ex['zh_sentence']}"
         for i, ex in enumerate(prompt_examples)
-    ) or "  - 本任务不展示旧例句，只保留核心词和辅助词，请直接生成自然口语句子。"
+    ) or "  - 本任务不展示旧例句，只保留核心词和辅助词，请直接生成朴素、自然的口语句子。"
     support_block = "\n".join(
         f"  - {w['wz_word']}（{w['definition']}）"
         for w in support_words
@@ -1210,8 +1341,9 @@ def build_task(
 {grammar_user_rules}
 
 如果一句话里需要额外内容词，优先复用参考例句和本地来源里已经出现过的说法，不要自己新造两字到四字词。
+同样意思优先用朴素说法，不要把 `显 / 罢 / 爻` 机械套在句末，也不要写 `个地方`、`相伴走...嬉` 这类空泛骨架。
 
-请生成 5 个 {MIN_SENTENCE_LENGTH}-{MAX_SENTENCE_LENGTH} 字的{DIALECT_NAME}口语长句。"""
+请生成 {GENERATED_SENTENCE_LIMIT} 个 {MIN_SENTENCE_LENGTH}-{MAX_SENTENCE_LENGTH} 字的{DIALECT_NAME}口语长句。"""
 
     approved_modern_terms = sorted(
         {
@@ -1538,14 +1670,21 @@ def request_generation(client, model, task):
                 {"role": "system", "content": task["prompt_system"]},
                 {"role": "user", "content": task["prompt_user"]},
             ],
-            temperature=0.6,
+            temperature=0.35,
             response_format={"type": "json_object"},
             timeout=120.0,
         )
         text = resp.choices[0].message.content or ""
         data = json.loads(text)
         sentences = data.get("sentences", [])
-        return sentences if isinstance(sentences, list) else []
+        if not isinstance(sentences, list):
+            return []
+        return dedupe_generated_candidates(
+            sentences,
+            core_word=str(task.get("core_word") or ""),
+            support_words=list(task.get("support_words") or []),
+            approved_modern_terms=list(task.get("approved_modern_terms") or []),
+        )
     except Exception as e:
         print(f"  [ERROR] {e}")
         return []
@@ -1636,6 +1775,13 @@ def validate_sentence(
     found_support = sorted({w for w in support_words if w in wz_clean})
     approved_modern_hits = sorted({w for w in approved_modern_terms if w in wz_clean})
     banned_term_hits = sorted({w for w in banned_terms if w in wz_clean})
+    global_blocked_hits = sorted(
+        {
+            term
+            for term in sorted(LEXICON_BLOCK_TERMS | EXPLICIT_BLOCK_TERMS)
+            if term and term in wz_clean
+        }
+    )
     domain_required_hits = sorted({w for w in domain_required_terms if w in wz_clean})
     domain_preferred_hits = sorted({w for w in domain_preferred_terms if w in wz_clean})
     domain_blocked_hits = sorted({w for w in domain_blocked_terms if w in wz_clean})
@@ -1647,8 +1793,9 @@ def validate_sentence(
         reasons.append(f"low_wz_word_coverage:{coverage_hits}")
     if len(found_support) > 1:
         reasons.append(f"support_words_overused:{len(found_support)}")
-    if banned_term_hits:
-        reasons.append(f"banned_terms:{','.join(banned_term_hits)}")
+    combined_banned_hits = sorted(set(banned_term_hits) | set(global_blocked_hits))
+    if combined_banned_hits:
+        reasons.append(f"banned_terms:{','.join(combined_banned_hits)}")
     if domain_blocked_hits:
         reasons.append(f"domain_blocked_terms:{','.join(domain_blocked_hits)}")
     if domain_required_terms and not domain_required_hits:
@@ -1677,7 +1824,7 @@ def validate_sentence(
         "core_word_present": core_present,
         "found_support_words": len(found_support),
         "approved_modern_hits": approved_modern_hits,
-        "banned_term_hits": banned_term_hits,
+        "banned_term_hits": combined_banned_hits,
         "domain_required_hits": domain_required_hits,
         "domain_preferred_hits": domain_preferred_hits,
         "domain_blocked_hits": domain_blocked_hits,
@@ -1876,6 +2023,7 @@ def main():
         print(f"Resuming: {len(done_ids)} tasks already done, {len(prev_sentences)} sentences in dedup pool")
 
     print(f"Existing sentences for dedup: {len(existing)}")
+    existing_skeletons: set[tuple[str, str, str]] = set()
 
     print(f"\nCreating {args.tasks} tasks (scene-balanced, core-word-driven)...")
     tasks = create_tasks_balanced(
@@ -1913,6 +2061,7 @@ def main():
 
             sentences = request_generation(client, model, task)
             stats["raw_sentences"] += len(sentences)
+            task_skeletons: set[str] = set()
 
             for sent in sentences:
                 wz = sent.get("wz", "")
@@ -1940,6 +2089,19 @@ def main():
                         wz = repaired.get("wz", wz)
                         zh = repaired.get("zh", zh)
                         repair_applied = clean_wz(wz) != original_wz or zh != original_zh
+                wz_clean = clean_wz(wz)
+                skeleton = sentence_skeleton_signature(
+                    wz_clean,
+                    core_word=str(task.get("core_word") or ""),
+                    support_words=list(task.get("support_words") or []),
+                    approved_modern_terms=list(task.get("approved_modern_terms") or []),
+                )
+                skeleton_key = (str(task.get("scene_id") or ""), str(task.get("core_word") or ""), skeleton)
+                if skeleton in task_skeletons or skeleton_key in existing_skeletons:
+                    stats["skeleton_duplicates"] += 1
+                    continue
+                task_skeletons.add(skeleton)
+                existing_skeletons.add(skeleton_key)
 
                 val = validate_sentence(
                     wz,

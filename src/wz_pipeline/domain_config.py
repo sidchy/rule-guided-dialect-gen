@@ -5,6 +5,7 @@ from functools import lru_cache
 from typing import Any
 
 from .paths import DOMAIN_CATALOG_PATH
+from .scene_policy import scene_ancestors
 
 
 def _string_list(value: Any) -> list[str]:
@@ -72,9 +73,11 @@ def resolve_domain_entries(domain_ids: list[str] | None) -> list[dict[str, Any]]
 def _applies_to_scene(entry: dict[str, Any], scene_id: str) -> bool:
     allowlist = set(entry.get("scene_allowlist") or [])
     denylist = set(entry.get("scene_denylist") or [])
-    if allowlist and scene_id not in allowlist:
+    scoped_scenes = [str(scene_id or "").strip(), *scene_ancestors(scene_id)]
+    scoped_scenes = [scene for scene in scoped_scenes if scene]
+    if allowlist and not any(scene in allowlist for scene in scoped_scenes):
         return False
-    if scene_id in denylist:
+    if any(scene in denylist for scene in scoped_scenes):
         return False
     return True
 

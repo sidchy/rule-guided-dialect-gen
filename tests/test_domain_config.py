@@ -69,3 +69,53 @@ def test_build_domain_context_drops_scene_mismatched_domain() -> None:
 
     assert context["domain_ids"] == []
     assert context["required_terms"] == []
+
+
+def test_build_domain_context_inherits_parent_scene_allowlist() -> None:
+    payload = [
+        {
+            "domain_id": "medical",
+            "label": "医疗",
+            "scene_allowlist": ["health_medical"],
+            "required_terms": ["挂号"],
+        }
+    ]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        catalog_path = Path(tmp_dir) / "domain_catalog.json"
+        catalog_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        original_path = domain_module.DOMAIN_CATALOG_PATH
+        try:
+            domain_module.DOMAIN_CATALOG_PATH = catalog_path
+            domain_module.load_domain_catalog.cache_clear()
+            context = domain_module.build_domain_context(["medical"], scene_id="health_hospital")
+        finally:
+            domain_module.DOMAIN_CATALOG_PATH = original_path
+            domain_module.load_domain_catalog.cache_clear()
+
+    assert context["domain_ids"] == ["medical"]
+    assert context["required_terms"] == ["挂号"]
+
+
+def test_build_domain_context_inherits_digital_parent_allowlist() -> None:
+    payload = [
+        {
+            "domain_id": "chat",
+            "label": "沟通",
+            "scene_allowlist": ["digital_chat"],
+            "required_terms": ["消息"],
+        }
+    ]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        catalog_path = Path(tmp_dir) / "domain_catalog.json"
+        catalog_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        original_path = domain_module.DOMAIN_CATALOG_PATH
+        try:
+            domain_module.DOMAIN_CATALOG_PATH = catalog_path
+            domain_module.load_domain_catalog.cache_clear()
+            context = domain_module.build_domain_context(["chat"], scene_id="digital_ai_assistant")
+        finally:
+            domain_module.DOMAIN_CATALOG_PATH = original_path
+            domain_module.load_domain_catalog.cache_clear()
+
+    assert context["domain_ids"] == ["chat"]
+    assert context["required_terms"] == ["消息"]
