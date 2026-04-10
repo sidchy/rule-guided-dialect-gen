@@ -5,6 +5,9 @@ def test_recovery_guardrails_flag_old_bad_ba_and_as_templates() -> None:
     assert "ba_after_request_marker" in grammar_validation_reasons("恁个天色，预警讲会落大雨，大家快走归罢。")
     assert "ba_clause_chain_after_completion" in grammar_validation_reasons("我外卖点爻罢，等渠送来就吃饭。")
     assert "a_shi_template_drift" in grammar_validation_reasons("该部手机阿是又打电话打不底。")
+    assert "completion_marker_nonadverse_action" in grammar_validation_reasons("天色恁个样子，我著埭屋里避雨爻罢。")
+    assert "completion_marker_nonadverse_action" in grammar_validation_reasons("鱼丸煮爻罢，你趁热吃落去。")
+    assert "completion_marker_nonadverse_action" in grammar_validation_reasons("天色恁个样子，我著埭屋里不出去爻。")
 
 
 def test_recovery_guardrails_flag_modal_with_qi_or_luqu() -> None:

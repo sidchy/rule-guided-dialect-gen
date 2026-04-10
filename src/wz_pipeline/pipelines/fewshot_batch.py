@@ -358,7 +358,7 @@ RECOVERY_PROMPT_BAD_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?:合着显(?:罢)?|合着爻罢)"),
     re.compile(r"交关"),
     re.compile(r"嬉嬉"),
-    re.compile(r"(?:点|洗|用|寻|焯菜)爻罢"),
+    re.compile(r"(?:点|洗|用|寻|焯菜|煮|避雨|不出门|不出去|出门|出去)爻(?:罢)?"),
     re.compile(r"(?:走|吃|做)起(?:[，,。！？!?]|$)"),
     re.compile(r"个地方"),
     re.compile(r"(?:相伴走.{0,8}嬉|走出嬉)"),
@@ -367,13 +367,32 @@ RECOVERY_GENERATED_BAD_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"(?:合着显(?:罢)?|合着爻罢)"),
     re.compile(r"交关"),
     re.compile(r"嬉嬉"),
-    re.compile(r"(?:点|洗|用|寻|焯菜)爻罢"),
+    re.compile(r"(?:点|洗|用|寻|焯菜|煮|避雨|不出门|不出去|出门|出去)爻(?:罢)?"),
 )
 PROMPT_EXAMPLE_LIMIT = 3
 GENERATED_SENTENCE_LIMIT = 3
 AMOUNT_SIGNATURE_RE = re.compile(r"[零〇一二两三四五六七八九十百千万几0-9]+番钿")
 NUMBER_SIGNATURE_RE = re.compile(r"[零〇一二两三四五六七八九十百千万几0-9]+")
 PRONOUN_SIGNATURE_RE = re.compile(r"(?:阿拉|卬你|我个|你个|渠个|我|你|渠|伊|俫)")
+RECOVERY_SAFE_TAILS_BY_SCENE: dict[str, tuple[str, ...]] = {
+    "weather_safety": ("大家小心。", "避雨要紧。"),
+    "transport_trip": ("路上小心。", "慢慢尔走。"),
+    "shopping_payment": ("算来真值。", "买来合算。"),
+    "food_dining": ("趁热吃。", "慢慢尔吃。"),
+    "health_medical": ("门诊先看。", "先去挂号。"),
+    "home_life": ("先收停当。", "慢慢尔做。"),
+}
+RECOVERY_SAFE_TAILS_BY_CORE: dict[str, tuple[str, ...]] = {
+    "天色": ("大家小心。", "避雨要紧。"),
+    "合着": ("算来真值。", "买来合算。"),
+    "相伴": ("路上小心。", "覅走错路。"),
+    "外卖": ("趁热吃。",),
+    "焯菜": ("趁热吃。",),
+    "鱼丸": ("趁热吃。",),
+    "挂号": ("先去挂号。",),
+    "门诊": ("门诊先看。",),
+    "排队": ("门诊先看。",),
+}
 
 
 def example_looks_prompt_safe(example: dict[str, Any], scene_id: str) -> bool:
@@ -400,6 +419,10 @@ def generated_candidate_looks_recovery_safe(sentence: str, scene_id: str, core_w
     if core_word == "大蛮阵" and "交关" in sentence:
         return False
     if core_word == "合着" and re.search(r"合着(?:显(?:罢)?|爻罢)", sentence):
+        return False
+    if core_word in {"外卖", "焯菜", "鱼丸"} and re.search(r"(?:点|焯菜|煮)爻(?:罢)?", sentence):
+        return False
+    if core_word == "天色" and re.search(r"(?:避雨|不出门)爻(?:罢)?", sentence):
         return False
     return True
 
@@ -502,14 +525,56 @@ def recovery_task_note(scene_id: str, core_word: str) -> str:
     if core_word == "合着":
         notes.append("讲价钱或划算时优先朴素说法，如 `真合着`，不要写 `合着显` 或 `合着爻罢`。")
     if core_word in {"外卖", "焯菜"}:
-        notes.append("不要把完成尾巴机械套成 `点爻罢`、`焯菜爻罢`。")
+        notes.append("`爻` 带消极收束意味，不是通用完成体；不要写 `点爻罢`、`焯菜爻罢`。")
+    if core_word == "鱼丸":
+        notes.append("煮好、端上来这类中性动作不要硬套 `爻`，不要写 `煮爻罢`。")
     if core_word == "相伴":
         notes.append("`相伴` 只用来陪人走、陪人寻路，不要搭 `嬉`，也不要写 `相伴寻爻罢`。")
     if scene_id == "weather_safety":
-        notes.append("天气安全场景优先写避雨、著埭屋里、小心准备，不要写 `嬉` 或 `嬉嬉`。")
+        notes.append("天气安全场景优先写避雨、著埭屋里、小心准备，不要写 `嬉` 或 `嬉嬉`；`爻` 带消极收束意味，不要写 `避雨爻罢`、`不出门爻罢`、`不出去爻`。")
     if core_word == "大蛮阵":
         notes.append("讲家里人多或开销重时，优先朴素说法，不要写 `交关`。")
     return "\n".join(f"  - {note}" for note in notes)
+
+
+def _join_recovery_tail(sentence: str, tail: str) -> str:
+    base = clean_wz(sentence).rstrip("。！？!?")
+    if not base:
+        return clean_wz(tail)
+    if base.endswith(("，", ",")):
+        return f"{base}{tail}"
+    return f"{base}，{tail}"
+
+
+def safe_lengthen_sentence(sentence: str, *, scene_id: str, core_word: str) -> str:
+    wz_clean = clean_wz(sentence)
+    if not wz_clean:
+        return wz_clean
+    deficit = MIN_SENTENCE_LENGTH - len(wz_clean)
+    if deficit <= 0 or deficit > 5:
+        return wz_clean
+    if re.search(r"[？?]", wz_clean):
+        return wz_clean
+    if grammar_validation_reasons(wz_clean):
+        return wz_clean
+
+    tail_candidates = list(RECOVERY_SAFE_TAILS_BY_CORE.get(core_word, ())) + list(
+        RECOVERY_SAFE_TAILS_BY_SCENE.get(scene_id, ())
+    )
+    seen_tails: set[str] = set()
+    for tail in tail_candidates:
+        if tail in seen_tails or tail in wz_clean:
+            continue
+        seen_tails.add(tail)
+        candidate = _join_recovery_tail(wz_clean, tail)
+        if len(clean_wz(candidate)) > MAX_SENTENCE_LENGTH:
+            continue
+        if grammar_validation_reasons(candidate):
+            continue
+        if not generated_candidate_looks_recovery_safe(candidate, scene_id, core_word):
+            continue
+        return candidate
+    return wz_clean
 
 
 # ===================== DATA LOADING =====================
@@ -1311,6 +1376,7 @@ SYSTEM_PROMPT = f"""你是{DIALECT_NAME}句子生成器。你的任务是根据�
 10. 如果任务里列了“禁止词汇”，即使参考例句里出现了也绝对不要复用
 11. 不要混入其他吴语区常见词形；只能跟参考例句、本地词表和给定词汇走，不会说就换成本地更稳的说法
 12. 功能词语法必须比“像不像方言”更优先；拿不准时，宁可少用 `爻 / 罢 / 著埭 / 起 / 落去`
+12a. `爻` 带消极、收束性的完结意味，不当一般完成体；中性或正向动作后不要机械加 `爻 / 爻罢`
 13. 不要自己发明新的两字到四字词；除给定词和参考例句能支持的说法外，拿不准就改写成来源里已有的稳妥表达
 14. 同样意思如果有朴素说法和花哨说法，优先选更朴素、更短依赖的说法，不要为追求方言味乱加 `显 / 罢 / 个 / 渠 / 俫`
 15. 不要机械套用这些粗糙骨架：`X显`、`X显罢`、`V爻罢`、裸 `走起 / 吃起 / 做起`、`个地方`、`相伴走...嬉`
@@ -1390,7 +1456,7 @@ def build_task(
 {grammar_user_rules}
 
 如果一句话里需要额外内容词，优先复用参考例句和本地来源里已经出现过的说法，不要自己新造两字到四字词。
-同样意思优先用朴素说法，不要把 `显 / 罢 / 爻` 机械套在句末，也不要写 `个地方`、`相伴走...嬉` 这类空泛骨架。
+同样意思优先用朴素说法，不要把 `显 / 罢 / 爻` 机械套在句末；`爻` 带消极收束意味，不当一般完成体，也不要写 `个地方`、`相伴走...嬉` 这类空泛骨架。
 
 请生成 {GENERATED_SENTENCE_LIMIT} 个 {MIN_SENTENCE_LENGTH}-{MAX_SENTENCE_LENGTH} 字的{DIALECT_NAME}口语长句。"""
 
@@ -2139,6 +2205,11 @@ def main():
                         wz = repaired.get("wz", wz)
                         zh = repaired.get("zh", zh)
                         repair_applied = clean_wz(wz) != original_wz or zh != original_zh
+                wz = safe_lengthen_sentence(
+                    wz,
+                    scene_id=str(task.get("scene_id") or ""),
+                    core_word=str(task.get("core_word") or ""),
+                )
                 wz_clean = clean_wz(wz)
                 skeleton = sentence_skeleton_signature(
                     wz_clean,

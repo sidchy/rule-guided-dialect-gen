@@ -13,7 +13,7 @@ from .paths import GRAMMAR_RULES_PATH
 
 WENZHOU_LEGACY_GRAMMAR_CONFIG: dict[str, Any] = {
     "review_markers": ["爻", "罢", "著埭", "落去", "未", "冇", "不"],
-    "repair_trigger_pattern": "(爻|罢|著埭|落去|吃起|做起|走起|写起|讲起|用起|显|阿是|訾那沃|啊不|啊未|啊冇|未|冇)",
+    "repair_trigger_pattern": "(爻|罢|著埭|落去|吃起|做起|走起|写起|讲起|用起|显|阿是|訾那沃|阿乜|啊不|啊未|啊冇|未|冇)",
     "completion_marker": "爻",
     "allowed_after_completion": "罢，。！？；,.!?;、再就还也阿沃个",
     "max_completion_count": 1,
@@ -106,6 +106,71 @@ WENZHOU_LEGACY_GRAMMAR_CONFIG: dict[str, Any] = {
             "description": "机械式 V爻罢 组合不稳，优先改成更自然的完成/已然表达",
         },
         {
+            "name": "completion_marker_nonadverse_action",
+            "pattern": "(?:点爻(?:罢)?|焯菜爻(?:罢)?|煮爻(?:罢)?|避雨爻(?:罢)?|不出门爻(?:罢)?|不出去爻(?:罢)?|出门爻(?:罢)?|出去爻(?:罢)?|等雨停爻(?:再走)?)(?:[？?！!。]|$|[，,])",
+            "description": "爻 带消极收束意味，不当一般完成体；中性或正向动作后不机械加 爻",
+        },
+        {
+            "name": "preposed_degree_with_xian",
+            "pattern": "(?:恁|忒|蛮)\\w{0,5}显",
+            "description": "前置程度副词（恁/忒/蛮）与后置显叠加，应去掉其中一个",
+        },
+        {
+            "name": "zhenzhen_xian",
+            "pattern": "真真.{0,6}显",
+            "description": "真真...显是旧坏骨架，优先改成更朴素稳妥的程度表达",
+        },
+        {
+            "name": "distributive_vv_object_order",
+            "pattern": "(?P<v>[\\u4e00-\\u9fff]{1,2})(?:该|许|这|那)[^，。！？,.!?]{1,12}(?P=v)(?:该|许|这|那)",
+            "description": "分配式动词重叠语序错误：应为 OBJ+VV，OBJ+VV，不写成 V+OBJ+V+OBJ",
+        },
+        {
+            "name": "mao_for_unfinished_event",
+            "pattern": "还冇(?:开声|开始|寄出|发出)",
+            "description": "未发生/未完成事件优先用 未，不写 还冇开声/还冇开始 这类格式",
+        },
+        {
+            "name": "a_mie_as_how_question",
+            "pattern": "阿乜(?:妆|办|做|讲)",
+            "description": "阿乜 表示什么，不替代 怎么/如何；how-question 优先用 訾那",
+        },
+        {
+            "name": "nonhuman_qu_pronoun",
+            "pattern": "渠(?:恁|忒|蛮|真).{0,4}(?:厚|高|贵|灵清|方便|要紧)",
+            "description": "渠 默认指人，不默认指代物件或非人对象",
+        },
+        {
+            "name": "second_person_subjective_xianxian",
+            "pattern": "你.{0,6}(?:烦闷|烦|急|累)显(?:烦闷|烦|急|累)",
+            "description": "主观情绪类 X显X 默认不用第二人称承载",
+        },
+        {
+            "name": "postposed_destination_after_qu",
+            "pattern": "走去(?:车站|地铁站|高铁站|医院|学校|机场)",
+            "description": "位移方向默认用地点前置：走车站去，不写 走去车站",
+        },
+        {
+            "name": "future_completion_ba",
+            "pattern": "(?:修起罢|开声爻罢|寄出罢)",
+            "description": "未发生或将来事件不应误用完成体/句末罢",
+        },
+        {
+            "name": "xian_non_adjective_base",
+            "pattern": "(?:糟塌|支付|走|写|读|讲|说|吃|睡|坐|站|跑|买|卖|修|寄|开声)显(?:糟塌|支付|走|写|读|讲|说|吃|睡|坐|站|跑|买|卖|修|寄|开声)",
+            "description": "X显X 只限形容词或状态词，不用于动词、动作结果或耗损过程",
+        },
+        {
+            "name": "object_fronted_reduplication",
+            "pattern": "(?:眙眙|问问|听听)(?:该|许|这|那)[^，。！？,.!?]{1,12}",
+            "description": "尝试义动词重叠默认宾语前置：OBJ+V+VV，不写 V+VV+OBJ",
+        },
+        {
+            "name": "constructional_core_misanalysis",
+            "pattern": "赶不逮记牢|赶不逮写牢|赶不逮背牢",
+            "description": "赶不逮 是构式资源，不和 记牢/写牢/背牢 这类结果义补语硬拼",
+        },
+        {
             "name": "a_shi_template_drift",
             "pattern": "(?<!是)阿是",
             "description": "阿是 不作自由疑问骨架；只有明确 yes/no alternative 才写 是阿是",
@@ -129,6 +194,10 @@ WENZHOU_LEGACY_GRAMMAR_CONFIG: dict[str, Any] = {
     "modal_verbs_before_completion": {
         "pattern": "(?:想|要|会|會|能|可以|应该|應該|打算|喜欢|曉得|晓得|觉得|覺得|认识|認識|希望|准备|準備|肯|敢)爻"
     },
+    "generation_full_section_titles": [
+        "## 12. 批量生成硬约束清单",
+        "## 13. 不推荐直接生成的高风险式",
+    ],
     "generation_section_titles": [
         "## 2. 生成总原则",
         "### 3.1 完成体：`爻`",
@@ -172,6 +241,19 @@ WENZHOU_LEGACY_GRAMMAR_CONFIG: dict[str, Any] = {
         "bare_xian_degree": [],
         "bare_start_marker_qi": ["### 3.5 起始体：`起`"],
         "completion_ba_motion_or_setup": ["### 3.1 完成体：`爻`", "### 3.4 已然体：重读 `罢` 与句末轻读 `罢`"],
+        "completion_marker_nonadverse_action": ["### 3.1 完成体：`爻`"],
+        "preposed_degree_with_xian": ["## 13. 不推荐直接生成的高风险式"],
+        "zhenzhen_xian": ["## 13. 不推荐直接生成的高风险式"],
+        "distributive_vv_object_order": ["## 12. 批量生成硬约束清单", "## 14. 可复用句式模板"],
+        "mao_for_unfinished_event": ["### 9.2 `未`", "### 9.3 `冇` 的否定用法", "### 9.4 三者不可混用"],
+        "a_mie_as_how_question": ["## 13. 不推荐直接生成的高风险式"],
+        "nonhuman_qu_pronoun": ["## 13. 不推荐直接生成的高风险式"],
+        "second_person_subjective_xianxian": ["## 13. 不推荐直接生成的高风险式"],
+        "postposed_destination_after_qu": ["## 13. 不推荐直接生成的高风险式"],
+        "future_completion_ba": ["### 3.1 完成体：`爻`", "### 3.4 已然体：重读 `罢` 与句末轻读 `罢`"],
+        "xian_non_adjective_base": ["## 13. 不推荐直接生成的高风险式"],
+        "object_fronted_reduplication": ["## 12. 批量生成硬约束清单", "## 14. 可复用句式模板"],
+        "constructional_core_misanalysis": ["## 13. 不推荐直接生成的高风险式"],
         "a_shi_template_drift": [],
         "wo_used_for_scalar_also": [],
         "a_used_for_quantificational_all": [],
@@ -179,7 +261,8 @@ WENZHOU_LEGACY_GRAMMAR_CONFIG: dict[str, Any] = {
     },
     "prompt_extra_notes": {
         "generation_user": [
-            "不要写北部吴语或上海话类词形，比如 `高头 / 交关 / 贪头`；拿不准就换成更稳的本地方言表达。"
+            "不要写北部吴语或上海话类词形，比如 `高头 / 交关 / 贪头`；拿不准就换成更稳的本地方言表达。",
+            "`爻` 带消极、收束性的完结意味，不当一般完成体；中性或正向动作后不要机械加 `爻 / 爻罢`。",
         ]
     },
 }

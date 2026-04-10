@@ -50,9 +50,21 @@ def compact_spec_section(title: str, *, max_lines: int = 4) -> str:
     return _display_title(title) + "\n" + "\n".join(compact)
 
 
+def load_spec_section_full(title: str) -> str:
+    body = load_grammar_spec_sections().get(title, "").strip()
+    if not body:
+        return _display_title(title)
+    return _display_title(title) + "\n" + body
+
+
 def generation_spec_excerpt(*, max_lines: int = 3) -> str:
-    titles = load_grammar_config().get("generation_section_titles") or []
-    return "\n\n".join(compact_spec_section(title, max_lines=max_lines) for title in titles)
+    config = load_grammar_config()
+    parts: list[str] = []
+    for title in config.get("generation_full_section_titles") or []:
+        parts.append(load_spec_section_full(title))
+    for title in config.get("generation_section_titles") or []:
+        parts.append(compact_spec_section(title, max_lines=max_lines))
+    return "\n\n".join(parts)
 
 
 def relevant_spec_titles(text: str, reasons: list[str] | None = None) -> list[str]:

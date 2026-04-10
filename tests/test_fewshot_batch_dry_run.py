@@ -459,3 +459,28 @@ def test_validate_sentence_flags_global_explicit_block_terms() -> None:
         domain_blocked_terms=[],
     )
     assert "banned_terms:赶紧" in val["reasons"]
+
+
+def test_safe_lengthen_sentence_adds_scene_or_core_tail_near_threshold() -> None:
+    sentence = "天色恁恶，大家著埭屋里。"
+    lengthened = batch_module.safe_lengthen_sentence(
+        sentence,
+        scene_id="weather_safety",
+        core_word="天色",
+    )
+    assert lengthened != batch_module.clean_wz(sentence)
+    assert len(batch_module.clean_wz(lengthened)) >= batch_module.MIN_SENTENCE_LENGTH
+    assert len(batch_module.clean_wz(lengthened)) <= batch_module.MAX_SENTENCE_LENGTH
+    assert any(tail in lengthened for tail in ("大家小心。", "避雨要紧。"))
+
+
+def test_safe_lengthen_sentence_skips_bad_bare_completion_marker() -> None:
+    sentence = "天色恁个样子，我著埭屋里不出去爻。"
+    assert (
+        batch_module.safe_lengthen_sentence(
+            sentence,
+            scene_id="weather_safety",
+            core_word="天色",
+        )
+        == batch_module.clean_wz(sentence)
+    )
